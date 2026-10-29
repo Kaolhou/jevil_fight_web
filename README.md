@@ -1,6 +1,6 @@
 # Jevil Fight Web
 
-**Play the Jevil secret boss fight from Deltarune Chapter 1 in your browser.**
+**Jevil fight simulator: play the Deltarune Chapter 1 secret boss online, free in your browser.**
 
 **Play it here:** https://jevil-fight-web.vercel.app/
 
