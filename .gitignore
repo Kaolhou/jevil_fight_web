@@ -1,8 +1,6 @@
-# Files extracted from your own copy of DELTARUNE. Never commit them.
-local/assets/
-assets/
+# The game data file itself is never committed (only the extracted assets/).
 *.win
-*.ogg
+*.dat
 __pycache__/
 *.pyc
 .DS_Store

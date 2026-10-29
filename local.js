@@ -1,5 +1,5 @@
-// Versão local: troca a arte e o som desenhados pelos sprites, fontes, sons e música
-// extraídos da sua cópia do DELTARUNE (capítulo 1). Só para uso no seu computador.
+// Troca a arte e o som desenhados pelos sprites, fontes, sons e música do DELTARUNE (capítulo 1),
+// extraídos com ferramentas/extract.py para assets/.
 'use strict';
 (function(){
 const META = window.META;
@@ -14,12 +14,42 @@ const BCOLOR = '#332033', BOX_GREEN = '#00c000';
 const DKBLUE = '#06067a', DKBLUE2 = '#202060', DKBLUE3 = '#1a1a4d';
 
 /* ------------------------------ assets ------------------------------ */
+// Tela de carregamento: o jogo fica parado até todas as imagens, sons e a música chegarem.
+// Os sons vão para a memória (blob), então tocar não baixa nada de novo.
+const MUSIC = 'assets/snd/mus_joker.ogg';
+let musicSrc = MUSIC;
+function loadingScreen(){
+  const wrap = document.getElementById('wrap'); wrap.style.position = 'relative';
+  const el = document.createElement('div');
+  el.id = 'loading'; el.setAttribute('role', 'progressbar'); el.setAttribute('aria-valuemin', '0'); el.setAttribute('aria-valuemax', '100');
+  el.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:#000;color:#fff;font-family:var(--font);font-size:12px;letter-spacing:.08em;z-index:2';
+  el.innerHTML = '<div id="loadtxt"></div><div style="width:60%;max-width:320px;height:12px;border:2px solid #fff;padding:2px"><div id="loadbar" style="height:100%;width:0;background:#ff0000"></div></div><div id="loadpct" style="color:#8a80a0">0%</div>';
+  wrap.appendChild(el);
+  el.querySelector('#loadtxt').textContent = LANG === 'pt' ? 'CARREGANDO' : 'LOADING';
+  return k => {
+    const pct = Math.floor(k*100);
+    el.querySelector('#loadbar').style.width = pct + '%';
+    el.querySelector('#loadpct').textContent = pct + '%';
+    el.setAttribute('aria-valuenow', String(pct));
+  };
+}
 function load(){
+  const show = loadingScreen();
+  const _update = window.update; window.update = () => {};
   const names = Object.keys(META.sprites).concat(Object.keys(META.fonts));
-  return Promise.all(names.map(n => new Promise(res => {
-    const im = new Image(); im.onload = im.onerror = res; im.src = 'assets/spr/' + n + '.png'; IMG[n] = im;
-  }))).then(() => {
-    for(const [n, f] of Object.entries(META.sounds)) SND[n] = { src: 'assets/snd/' + f, pool: [] };
+  const sounds = Object.entries(META.sounds);
+  const total = names.length + sounds.length + 1;
+  let done = 0; const tick = () => show(++done/total);
+  const blob = src => fetch(src).then(r => r.ok ? r.blob() : Promise.reject()).then(b => URL.createObjectURL(b)).catch(() => src);
+  const jobs = names.map(n => new Promise(res => {
+    const im = new Image(); im.onload = im.onerror = () => { tick(); res(); }; im.src = 'assets/spr/' + n + '.png'; IMG[n] = im;
+  })).concat(sounds.map(([n, f]) => blob('assets/snd/' + f).then(src => { SND[n] = { src, pool: [] }; tick(); })),
+    blob(MUSIC).then(src => { musicSrc = src; tick(); }));
+  return Promise.all(jobs).then(() => {
+    for(const k in pressed) pressed[k] = false;
+    window.update = _update;
+    const el = document.getElementById('loading'); if(el) el.remove();
+    document.getElementById('cv').focus();
   });
 }
 
@@ -134,7 +164,7 @@ Snd.hook = (name, arg) => {
   if(name in SMAP){ if(SMAP[name]) snd(SMAP[name], name === 'graze' ? .6 : 1); return true; }
   return true;
 };
-Snd.startMusic = function(){ if(music) return; music = new Audio('assets/snd/mus_joker.ogg'); music.loop = true; music.volume = musicOn ? Math.min(1, .6*vol) : 0; music.play().catch(() => {}); };
+Snd.startMusic = function(){ if(music) return; music = new Audio(musicSrc); music.loop = true; music.volume = musicOn ? Math.min(1, .6*vol) : 0; music.play().catch(() => {}); };
 Snd.stopMusic = function(){ if(music){ music.pause(); music = null; } };
 Snd.toggleMusic = function(){ musicOn = !musicOn; if(music) music.volume = musicOn ? Math.min(1, .6*vol) : 0; };
 Snd.tick = function(){};

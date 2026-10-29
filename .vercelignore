@@ -1,3 +1,4 @@
-# The local build needs the extracted game files; it is not deployed.
-local/
+# Only the game itself is deployed.
+ferramentas/
+jogar.sh
 README.md

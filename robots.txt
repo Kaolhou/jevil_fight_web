@@ -1,6 +1,4 @@
 User-agent: *
 Allow: /
-# local/ needs the extracted game files, which are not in this repository
-Disallow: /local/
 
 Sitemap: https://jevil-fight-web.vercel.app/sitemap.xml

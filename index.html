@@ -1751,7 +1751,7 @@ function drawTitle(){
     text(o, 320, y, i === G.titleSel ? '#ffff00' : '#fff', 16, 'center');
     if(i === G.titleSel) ctx.drawImage(SPR.soul, 320 - o.length*8 - 30, y);
   });
-  text(L('Fan recreation with original art and music.', 'Recriação de fã, com arte e música próprias.'), 320, 440, '#605878', 8, 'center');
+  text(L('Fan recreation. DELTARUNE art and music by Toby Fox.', 'Recriação de fã. Arte e música de DELTARUNE por Toby Fox.'), 320, 440, '#605878', 8, 'center');
   text(L('Z to confirm', 'Z para confirmar'), 320, 456, '#605878', 8, 'center');
 }
 function drawLose(){
@@ -1830,5 +1830,7 @@ window.__G = G; window.__ATTACKS = ATTACKS; window.__update = update; window.__d
 }
 setLang(LANG);
 </script>
+<script src="assets/meta.js?v=20261029e"></script>
+<script src="local.js?v=20261029e"></script>
 </body>
 </html>
