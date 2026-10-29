@@ -1,0 +1,8 @@
+# Files extracted from your own copy of DELTARUNE. Never commit them.
+local/assets/
+assets/
+*.win
+*.ogg
+__pycache__/
+*.pyc
+.DS_Store

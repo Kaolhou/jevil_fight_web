@@ -1,0 +1,1760 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jevil Fight Web (local build)</title>
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#000000">
+</head>
+<body>
+
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+<style>
+/* Layout: one black stage, the 640x480 battle canvas centered and scaled, touch pad below on phones */
+:root{
+  --bg:#000; --fg:#fff; --dim:#8a80a0; --accent:#ffa040; --key:#1a1426;
+  --font:"Press Start 2P", ui-monospace, monospace;
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{background:var(--bg);color:var(--fg);font-family:var(--font);margin:0;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:12px;
+  display:flex;flex-direction:column;align-items:center;gap:12px;box-sizing:border-box;overflow-x:hidden}
+#wrap{width:100%;max-width:960px;aspect-ratio:4/3;max-height:calc(100vh - 120px);display:flex;justify-content:center}
+canvas{height:100%;max-width:100%;aspect-ratio:4/3;image-rendering:pixelated;image-rendering:crisp-edges;background:#000;outline:none}
+canvas:focus-visible{outline:2px solid var(--accent)}
+.help{font-size:9px;line-height:1.8;color:var(--dim);text-align:center;max-width:640px;letter-spacing:.04em}
+.help b{color:var(--fg);font-weight:normal}
+.vol{display:flex;align-items:center;gap:8px;font-size:9px;color:var(--dim);letter-spacing:.04em}
+.vol input{width:160px;accent-color:var(--accent)}
+#pad{display:none;width:100%;max-width:520px;justify-content:space-between;align-items:center;gap:12px;user-select:none;-webkit-user-select:none;touch-action:none}
+#pad .dir{display:grid;grid-template-columns:repeat(3,52px);grid-template-rows:repeat(3,52px);gap:4px}
+#pad button{font-family:var(--font);font-size:12px;color:var(--fg);background:var(--key);border:2px solid #3a2f55;border-radius:6px;touch-action:none}
+#pad button:active,#pad button.on{background:#3a2f55}
+#pad .ab{display:flex;gap:12px}
+#pad .ab button{width:64px;height:64px;border-radius:50%}
+@media (pointer:coarse){#pad{display:flex}.help .kb{display:none}}
+@media (prefers-reduced-motion:reduce){canvas{transition:none}}
+</style>
+
+<div id="wrap"><canvas id="cv" width="640" height="480" tabindex="0" aria-label="Batalha contra o Jevil"></canvas></div>
+<div id="pad" aria-hidden="true">
+  <div class="dir">
+    <span></span><button data-k="up">▲</button><span></span>
+    <button data-k="left">◀</button><span></span><button data-k="right">▶</button>
+    <span></span><button data-k="down">▼</button><span></span>
+  </div>
+  <div class="ab"><button data-k="x">X</button><button data-k="z">Z</button></div>
+</div>
+<p class="help"><span class="kb"><b>Setas</b> mover · <b>Z</b>/Enter confirmar · <b>X</b>/Shift voltar · <b>M</b> música</span></p>
+<label class="vol">Volume <input id="volume" type="range" min="0" max="100" step="5" value="70" aria-label="Volume"><output id="volv">70%</output></label>
+
+<script>
+'use strict';
+/* =====================================================================
+   Luta contra o Jevil — recriação com arte e som próprios.
+   Lógica a 30 quadros por segundo, como o jogo original.
+   ===================================================================== */
+const W = 640, H = 480;
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;
+const FONT = '"Press Start 2P", monospace';
+
+/* ---------------------------- Configuração ---------------------------- */
+/* Números tirados do código do capítulo 1 (scr_monstersetup, scr_gamestart, scr_damage). */
+const CFG = {
+  jevil: { hp: 3500, at: 10, df: 5 },
+  party: [
+    { id: 'kris',   name: 'KRIS',   hp: 90,  at: 10, df: 2, mag: 0, col: '#00ffff' },
+    { id: 'susie',  name: 'SUSIE',  hp: 110, at: 14, df: 2, mag: 1, col: '#ff00ff' },
+    { id: 'ralsei', name: 'RALSEI', hp: 70,  at: 8,  df: 2, mag: 7, col: '#00ff00' },
+  ],
+  soulSpeed: 4, soulSlow: 2,   // px por quadro; segurando X fica lento
+  iframes: 40,                 // quadros de invencibilidade
+  tpMax: 250, defendTP: 40,
+  grazeBox: 25,                // área de graze 50x50
+  soulR: 6,                    // hitbox do coração (máscara 16x16 em forma de coração)
+  timePoints: 1,               // quanto um raspão encurta o turno
+  box: { cx: 320, cy: 170, w: 150, h: 150, inner: 71 },
+  // inventário cheio (12, o limite do cap. 1) montado para chefe; curas de batalha conforme o código do jogo
+  items: ['Spincake', 'ReviveMint', 'ReviveMint', 'Favwich', 'Darkburger', 'Darkburger', 'Darkburger', 'Darkburger', 'ChocDiamond', 'ChocDiamond', 'HeartsDonut', 'HeartsDonut'],
+};
+const ITEMS = {
+  'Dark Candy':  { heal: 40 },
+  'ChocDiamond': { heal: { kris: 80, susie: 30, ralsei: 30 } },
+  'ReviveMint':  { heal: 'revive' },
+  'Top Cake':    { heal: 160, all: true },
+  'Spincake':    { heal: 80, all: true },
+  'Darkburger':  { heal: 70 },
+  'HeartsDonut': { heal: { kris: 10, susie: 90, ralsei: 60 } },
+  'Favwich':     { heal: 500 },
+};
+
+/* ------------------------------- Entrada ------------------------------ */
+const held = {}, pressed = {};
+const KEYMAP = { ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down', ArrowLeft:'left', KeyA:'left',
+  ArrowRight:'right', KeyD:'right', KeyZ:'z', Enter:'z', NumpadEnter:'z', Space:'z', KeyX:'x', ShiftLeft:'x', ShiftRight:'x', KeyM:'m' };
+function press(k){ if(!held[k]) pressed[k] = true; held[k] = true; Snd.init(); }
+function release(k){ held[k] = false; }
+addEventListener('keydown', e => { const k = KEYMAP[e.code]; if(!k) return; e.preventDefault(); if(!e.repeat) press(k); });
+addEventListener('keyup', e => { const k = KEYMAP[e.code]; if(k) release(k); });
+addEventListener('blur', () => { for(const k in held) held[k] = false; });
+document.querySelectorAll('#pad button').forEach(b => {
+  const k = b.dataset.k;
+  b.addEventListener('pointerdown', e => { e.preventDefault(); b.classList.add('on'); press(k); });
+  const up = () => { b.classList.remove('on'); release(k); };
+  b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('pointerleave', up);
+});
+cv.addEventListener('pointerdown', () => { cv.focus(); Snd.init(); });
+const hit = k => !!pressed[k];
+
+/* -------------------------------- Som --------------------------------- */
+// Volume (0 a 1), lembrado só neste navegador
+let VOL = .7;
+try { const v = parseFloat(localStorage.getItem('jevil-vol')); if(v >= 0 && v <= 1) VOL = v; } catch(e){}
+function setVolume(v){
+  VOL = v;
+  if(Snd.master) Snd.master.gain.value = VOL * .7;
+  if(window.__setVol) window.__setVol(VOL);
+  try { localStorage.setItem('jevil-vol', String(VOL)); } catch(e){}
+}
+// Idioma da interface: inglês por padrão, português opcional (lembrado no navegador).
+// As falas e mensagens de batalha ficam em inglês, como no jogo.
+let LANG = 'en';
+try { if(localStorage.getItem('jevil-lang') === 'pt') LANG = 'pt'; } catch(e){}
+// ?lang=pt ou ?lang=en no endereço tem prioridade (links de busca em cada idioma)
+try { const q = new URLSearchParams(location.search).get('lang'); if(q === 'pt' || q === 'en') LANG = q; } catch(e){}
+const L = (en, pt) => LANG === 'pt' ? pt : en;
+const tr = v => (v && typeof v === 'object') ? v[LANG] : v;
+function setLang(l){
+  LANG = l;
+  try { localStorage.setItem('jevil-lang', l); } catch(e){}
+  document.documentElement.lang = L('en', 'pt-BR');
+  document.querySelector('.help .kb').innerHTML = L('<b>Arrows</b> move · <b>Z</b>/Enter confirm · <b>X</b>/Shift back · <b>M</b> music',
+    '<b>Setas</b> mover · <b>Z</b>/Enter confirmar · <b>X</b>/Shift voltar · <b>M</b> música');
+  document.getElementById('cv').setAttribute('aria-label', L('Battle against Jevil', 'Batalha contra o Jevil'));
+}
+// Tradução das falas (modo PT). O jogo só existe em inglês; isto é uma tradução de fã.
+const PT_LINES = {
+"* UEE HEE!\n* VISITORS, VISITORS!\n* NOW WE CAN PLAY, PLAY!": "* UEE HEE!\n* VISITANTES, VISITANTES!\n* AGORA PODEMOS BRINCAR, BRINCAR!",
+"* THEN, AFTER YOU, I CAN PLAY WITH EVERYONE ELSE, TOO!": "* E DEPOIS DE VOCÊS, POSSO BRINCAR COM TODO O RESTO TAMBÉM!",
+"* So that's the kinda game you wanna play, huh...?": "* Então é esse o tipo de jogo que você quer jogar, é...?",
+"* Then, I gotta warn you...": "* Então, eu tenho que te avisar...",
+"* You're dealing with a couple of sharks.": "* Você está lidando com uns tubarões.",
+"* UEE HEE HEE! SHARK-TO-SHARK! I WOULDN'T HAVE IT ANY OTHER WAY!": "* UEE HEE HEE! TUBARÃO CONTRA TUBARÃO! NÃO PODIA SER DE OUTRO JEITO!",
+"* NOW, NOW!\n* LET THE GAMES BEGIN!!": "* AGORA, AGORA!\n* QUE OS JOGOS COMECEM!!",
+"CHAOS, CHAOS,\n\nCATCH ME\nIF YOU CAN!": "CAOS, CAOS,\n\nME PEGUE\nSE PUDER!",
+"SHALL WE\nPLAY THE\nRING-AROUND?": "VAMOS\nBRINCAR DE\nRODA?",
+"MY HEARTS GO\nOUT TO ALL\nYOU SINNERS!": "MEUS COPAS\nVÃO PARA\nVOCÊS,\nPECADORES!",
+"HA, HA, LET'S\nMAKE THE\nDEVILSKNIFE.": "HA, HA,\nVAMOS FAZER\nA DEVILSKNIFE.",
+"PIIP PIIP,\nLET'S RIDE THE\nCAROUSEL GAME.": "PIIP PIIP,\nVAMOS ANDAR\nNO CARROSSEL.",
+"HEE HEE,\nHAVING FUN!?\nJOIN THE\nCLUB!": "HEE HEE,\nSE DIVERTINDO?\nENTRE PRO\nCLUBE DE PAUS!",
+"HEARTS,\nDIAMONDS,\nI CAN DO\nANYTHING!": "COPAS,\nOUROS,\nEU POSSO\nTUDO!",
+"WHO KEEPS\nSPINNING THE\nWORLD\nAROUND?": "QUEM FICA\nGIRANDO O\nMUNDO?",
+"YOU KIDS ARE\nREALLY\nKEEPING UP!": "VOCÊS ESTÃO\nMESMO\nAGUENTANDO!",
+"NU-HA!!\nI NEVER HAD\nSUCH FUN,\nFUN!!": "NU-HA!!\nNUNCA ME\nDIVERTI\nTANTO, TANTO!!",
+"A BEAUTY IS\nJOYING IN\nMY HEART!": "UMA BELEZA\nSE ALEGRA\nNO MEU\nCORAÇÃO!",
+"EVEN\nDEVILSKNIFE\nIS SMILING!": "ATÉ A\nDEVILSKNIFE\nESTÁ\nSORRINDO!",
+"IT'S SO\nEXCITING...\nI CAN'T\nTAKE IT!!!": "É TÃO\nEMOCIONANTE...\nNÃO\nAGUENTO!!!",
+"THIS IS IT,\nBOISENGIRLS!\nSEE YA!": "É AGORA,\nMENINOS E\nMENINAS!\nTCHAU!",
+"ENOUGH!!\nYOU KIDS\nTIRED ME UP!": "CHEGA!!\nVOCÊS ME\nCANSARAM!",
+"KIDDING!!\nHERE'S MY\nFINAL CHAOS!": "BRINCADEIRA!!\nAQUI ESTÁ\nMEU CAOS\nFINAL!",
+"A CHAOS,\nCHAOS!": "UM CAOS,\nCAOS!",
+"PLEASE, IT'S\nJUST A\nSIMPLE\nCHAOS.": "POR FAVOR,\nÉ SÓ UM\nCAOS\nSIMPLES.",
+"I CAN DO\nANYTHING!!": "EU POSSO\nTUDO!!",
+"THIS BODY\nCANNOT BE\nKILLED!": "ESTE CORPO\nNÃO PODE\nSER MORTO!",
+"THESE\nCURTAINS\nARE REALLY\nON FIRE!": "ESTAS\nCORTINAS\nESTÃO MESMO\nPEGANDO\nFOGO!",
+"IT'S ALL\nTOO MUCH\nFUN!!!": "É TUDO\nDIVERTIDO\nDEMAIS!!!",
+"* The world is spinning, spinning.": "* O mundo está girando, girando.",
+"* The air crackles with freedom.": "* O ar estala de liberdade.",
+"* JEVIL is laughing incomprehensibly.": "* JEVIL ri de um jeito incompreensível.",
+"* It feels like a whirlwind.": "* Parece um redemoinho.",
+"* Smells like chaos.": "* Cheira a caos.",
+"* JEVIL seems exhausted...?": "* JEVIL parece exausto...?",
+"* CHAOS BOMB was prepared FOR YOU.": "* A BOMBA DO CAOS foi preparada PARA VOCÊ.",
+"* Something terrible is coming...!": "* Algo terrível está vindo...!",
+"* JEVIL's pulling out all the stops!": "* JEVIL está usando tudo o que tem!",
+"* JEVIL is truly exhausted!": "* JEVIL está realmente exausto!",
+"* But its name wasn't YELLOW...": "* Mas o nome dele não estava AMARELO...",
+"* JEVIL \n* There is no strategy to defeat the enemy. Good luck!": "* JEVIL \n* Não existe estratégia para derrotar o inimigo. Boa sorte!",
+"* Ralsei chanted something!": "* Ralsei entoou alguma coisa!",
+"* Susie spun something around!": "* Susie girou alguma coisa!",
+"* Kris gazed strangely!": "* Kris fez um olhar estranho!",
+"* JEVIL's next attack weakened!": "* O ataque do JEVIL enfraqueceu!",
+"* JEVIL's looking exhausted!": "* JEVIL parece exausto!",
+"* JEVIL became more TIRED!": "* JEVIL ficou mais TIRED!",
+"* What!": "* O quê!",
+"* It was just foley!": "* Era só efeito sonoro!",
+"* JEVIL felt at ease!": "* JEVIL ficou à vontade!",
+"* JEVIL's defense dropped!": "* A defesa do JEVIL caiu!",
+"* Awkward! Upcoming attack will hurt rapidly!": "* Que estranho! O próximo ataque vai machucar rápido!",
+"* Tranquil!": "* Tranquilo!",
+"* The dance defended the party!": "* A dança defendeu o grupo!",
+"* It's nothing but a useless bird!": "* É só um pássaro inútil!",
+"* It felt comforting!": "* Foi reconfortante!",
+"* Everyone's HP got jumbled up!": "* O HP de todo mundo se embaralhou!",
+"* JEVIL's upcoming move got powered up!": "* O golpe do JEVIL ficou mais forte!",
+"* A perfect 10!": "* Um 10 perfeito!",
+"* Kris spun around!": "* Kris rodopiou!",
+"* JEVIL got slightly more TIRED, and...!": "* JEVIL ficou um pouco mais TIRED, e...!",
+"* Ralsei cast PACIFY!": "* Ralsei usou PACIFY!",
+"* JEVIL fell asleep, at last.": "* JEVIL finalmente adormeceu.",
+"* ...But the enemy wasn't TIRED.": "* ...Mas o inimigo não estava TIRED.",
+"* Ralsei cast HEAL PRAYER!": "* Ralsei usou HEAL PRAYER!",
+"* Susie cast RUDE BUSTER!": "* Susie usou RUDE BUSTER!",
+"* JEVIL dozed off, worn out from all the fun.": "* JEVIL cochilou, esgotado de tanta diversão.",
+"* \"...WHAT FUN, WHAT FUN. I'M SLEEPY, SLEEPY...\"": "* \"...QUE DIVERTIDO, QUE DIVERTIDO. ESTOU COM SONO, SONO...\"",
+"* You got the JEVILSTAIL!": "* Você ganhou o JEVILSTAIL!",
+"* \"THIS BODY CANNOT BE KILLED!\"": "* \"ESTE CORPO NÃO PODE SER MORTO!\"",
+"* \"...BUT I'M BORED NOW, BORED. YOU WIN, WIN.\"": "* \"...MAS AGORA CANSEI, CANSEI. VOCÊS VENCERAM, VENCERAM.\"",
+"* You got the DEVILSKNIFE!": "* Você ganhou a DEVILSKNIFE!",
+"\"UEE HEE HEE! NOW YOU STAY, STAY!\"": "\"UEE HEE HEE! AGORA VOCÊS FICAM, FICAM!\""
+};
+const PT_RULES = [
+  [/^\* (\w+) spared JEVIL!$/, '* $1 poupou o JEVIL!'],
+  [/^\* (\w+) used the (.+)!$/, '* $1 usou o $2!'],
+  [/^\* Everyone recovered (\d+) HP!$/, '* Todos recuperaram $1 HP!'],
+  [/^\* (\w+)'s HP was maxed out\.$/, '* O HP de $1 ficou no máximo.'],
+  [/^\* (\w+) recovered (\d+) HP!$/, '* $1 recuperou $2 HP!'],
+];
+// Traduz a fala inteira; se não houver, traduz linha a linha (falas montadas com \n)
+function tx(s){
+  if(LANG !== 'pt' || typeof s !== 'string') return s;
+  if(PT_LINES[s]) return PT_LINES[s];
+  for(const [re, out] of PT_RULES) if(re.test(s)) return s.replace(re, out);
+  if(s.includes('\n')){ const parts = s.split('\n'); if(parts.some(p => PT_LINES[p] || PT_RULES.some(([re]) => re.test(p)))) return parts.map(tx).join('\n'); }
+  return s;
+}
+const Snd = {
+  ac: null, master: null, musicGain: null, musicOn: true, nextNote: 0, step: 0, playing: false,
+  init(){
+    if(this.ac) { if(this.ac.state === 'suspended') this.ac.resume(); return; }
+    try {
+      this.ac = new (window.AudioContext || window.webkitAudioContext)();
+      this.master = this.ac.createGain(); this.master.gain.value = VOL * .7; this.master.connect(this.ac.destination);
+      this.musicGain = this.ac.createGain(); this.musicGain.gain.value = 0.35; this.musicGain.connect(this.master);
+      const len = this.ac.sampleRate; this.noise = this.ac.createBuffer(1, len, this.ac.sampleRate);
+      const d = this.noise.getChannelData(0); for(let i=0;i<len;i++) d[i] = Math.random()*2-1;
+    } catch(e) { this.ac = null; }
+  },
+  tone(f, dur, type='square', vol=0.08, slide=0, when=0, dest){
+    if(!this.ac) return;
+    const t = this.ac.currentTime + when, o = this.ac.createOscillator(), g = this.ac.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, t);
+    if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, f*slide), t+dur);
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0008, t+dur);
+    o.connect(g); g.connect(dest || this.master); o.start(t); o.stop(t+dur+0.02);
+  },
+  hiss(dur, vol=0.15, freq=2000, type='bandpass', when=0){
+    if(!this.ac) return;
+    const t = this.ac.currentTime + when, s = this.ac.createBufferSource(), f = this.ac.createBiquadFilter(), g = this.ac.createGain();
+    s.buffer = this.noise; f.type = type; f.frequency.value = freq;
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0008, t+dur);
+    s.connect(f); f.connect(g); g.connect(this.master); s.start(t); s.stop(t+dur+0.02);
+  },
+  ALIAS: { pirouette: 'spin', hypnosis: 'bell', awkward: 'back', bird: 'tick', laser: 'bomb', crit: 'tp', item: 'heal', buster: 'slash', scythe: 'spin', voice: null },
+  play(name, arg){
+    if(this.hook && this.hook(name, arg)) return;
+    if(name in this.ALIAS) name = this.ALIAS[name];
+    if(!this.ac || !name) return;
+    switch(name){
+      case 'move':   this.tone(1180, .035, 'square', .04); break;
+      case 'select': this.tone(880, .04, 'square', .05); this.tone(1320, .06, 'square', .05, 0, .04); break;
+      case 'back':   this.tone(600, .05, 'square', .04, .7); break;
+      case 'text':   this.tone(420 + Math.random()*40, .03, 'square', .035); break;
+      case 'jtext':  this.tone(700 + Math.random()*260, .035, 'square', .04, 1.3); break;
+      case 'hurt':   this.tone(260, .25, 'sawtooth', .12, .3); this.hiss(.18, .14, 900); break;
+      case 'graze':  this.tone(2400, .03, 'triangle', .05); break;
+      case 'slash':  this.hiss(.16, .2, 3500, 'highpass'); this.tone(900, .12, 'sawtooth', .05, .4); break;
+      case 'damage': this.tone(160, .2, 'square', .1, .5); this.hiss(.12, .12, 600); break;
+      case 'heal':   [523,659,784,1047].forEach((f,i)=>this.tone(f, .12, 'triangle', .08, 0, i*.05)); break;
+      case 'tp':     this.tone(1568, .08, 'triangle', .06); this.tone(2093, .1, 'triangle', .06, 0, .06); break;
+      case 'bomb':   this.hiss(.5, .28, 300, 'lowpass'); this.tone(90, .4, 'square', .12, .4); break;
+      case 'tick':   this.tone(1800, .02, 'square', .03); break;
+      case 'shoot':  this.tone(500, .06, 'square', .03, 1.8); break;
+      case 'spin':   this.tone(300, .3, 'triangle', .06, 3); break;
+      case 'bell':   [1760, 2637].forEach((f,i)=>this.tone(f, .35, 'sine', .07, 0, i*.03)); break;
+      case 'appear': this.tone(200, .25, 'square', .06, 4); break;
+      case 'down':   this.tone(300, .5, 'square', .1, .25); break;
+      case 'spare':  [784,988,1175,1568].forEach((f,i)=>this.tone(f, .2, 'square', .05, 0, i*.07)); break;
+      case 'win':    [523,659,784,1047,784,1047].forEach((f,i)=>this.tone(f, .2, 'square', .06, 0, i*.11)); break;
+      case 'laugh':  [0,1,2,3].forEach(i=>this.tone(900 - i*60, .07, 'square', .05, 1.4, i*.09)); break;
+    }
+  },
+  /* Música original: valsa de carrossel em ré menor, 3/4. */
+  MEL: [69,74,77,81,79,77, 76,73,69,73,76,79, 77,76,74,69,74,77, 74,77,82,81,79,77,
+        79,82,86,84,82,81, 81,79,76,73,76,79, 77,81,86,81,77,74, 73,76,79,81,-1,-1,
+        81,80,81,84,81,77, 76,75,76,79,76,73, 74,77,81,86,85,86, 82,81,79,77,76,74,
+        79,77,76,74,73,74, 76,79,82,81,79,76, 77,74,69,74,77,81, 73,-1,69,-1,-1,-1],
+  BASS: [50,45,50,46,43,45,50,45, 50,45,50,46,43,45,50,45],
+  CHORD: [[62,65,69],[61,64,67],[62,65,69],[62,65,70],[62,67,70],[61,64,69],[62,65,69],[61,64,67]],
+  startMusic(){ if(!this.ac || this.playing) return; this.playing = true; this.nextNote = this.ac.currentTime + .05; this.step = 0; },
+  stopMusic(){ this.playing = false; },
+  tick(){
+    if(!this.ac || !this.playing || !this.musicOn) return;
+    const e8 = 60/176/2 * (G.fast ? 0.85 : 1);
+    while(this.nextNote < this.ac.currentTime + .15){
+      const s = this.step, when = this.nextNote - this.ac.currentTime;
+      const m = this.MEL[s % this.MEL.length];
+      if(m > 0) { this.tone(mtof(m), e8*.9, 'square', .05, 0, when, this.musicGain); this.tone(mtof(m+12), e8*.5, 'triangle', .02, 0, when, this.musicGain); }
+      const bar = Math.floor(s/6) % 16, beat = s % 6;
+      if(beat === 0) this.tone(mtof(this.BASS[bar]-12), e8*1.8, 'triangle', .14, 0, when, this.musicGain);
+      if(beat === 2 || beat === 4) this.CHORD[bar%8].forEach(n => this.tone(mtof(n-12), e8*.6, 'square', .018, 0, when, this.musicGain));
+      if(beat === 5 && s % 12 === 11) this.tone(mtof(93), e8*.4, 'sine', .03, 0, when, this.musicGain);
+      this.nextNote += e8; this.step++;
+    }
+  },
+  toggleMusic(){ this.musicOn = !this.musicOn; if(this.musicGain) this.musicGain.gain.value = this.musicOn ? .35 : 0; if(this.musicOn) this.nextNote = this.ac ? this.ac.currentTime + .05 : 0; },
+};
+const mtof = m => 440 * Math.pow(2, (m-69)/12);
+
+/* ------------------------------ Sprites ------------------------------- */
+function makeSprite(rows, pal, s=2, flat){
+  const w = Math.max(...rows.map(r => r.length)), h = rows.length;
+  const c = document.createElement('canvas'); c.width = w*s; c.height = h*s;
+  const g = c.getContext('2d');
+  rows.forEach((r, y) => [...r].forEach((ch, x) => { if(pal[ch]) { g.fillStyle = flat || pal[ch]; g.fillRect(x*s, y*s, s, s); } }));
+  return c;
+}
+const PAL_J = { p:'#4a2f86', P:'#7a52c8', y:'#f8d048', Y:'#b08418', w:'#f2eef8', g:'#b4aac8', k:'#120c1c', e:'#ffe040', r:'#d02848' };
+const JEVIL = [
+  "..yy........................yy..",
+  ".yYYy......................yYYy.",
+  "..yy........................yy..",
+  "...pp......................PP...",
+  "....pp....................PP....",
+  ".....ppp................PPP.....",
+  "......pppp............PPPP......",
+  ".......pppppp......PPPPPP.......",
+  "........ppppppppPPPPPPPP........",
+  ".........pppppppPPPPPPP.........",
+  "..........kkkkkkkkkkkk..........",
+  ".........kwwwwwwwwwwwwk.........",
+  "........kwwwwwwwwwwwwwwk........",
+  "........kwwkkkwwwwkkkwwk........",
+  "........kwkkekwwwwkekkwk........",
+  "........kwwkkkwwwwkkkwwk........",
+  "........kgwwwwwwwwwwwwgk........",
+  "........kwkkkkkkkkkkkkwk........",
+  "........kwkwkwkwkwkwkwwk........",
+  ".........kwkkkkkkkkkkwk.........",
+  "..........kwwkwkwkwwwk..........",
+  "...........kkkkkkkkkk...........",
+  ".......yyyyyyyyyyyyyyyyyy.......",
+  "........yYyYyYyYyYyYyYyY........",
+  "..........pppppPPPPPP...........",
+  ".........ppppppPPPPPPP..........",
+  "........pppyppPPPPyPPPP.........",
+  ".......kpppyyppPPPyyPPPk........",
+  "......kk.pppyppPPPPyPPP.kk......",
+  ".....kk..pppppPPPPPPPPP..kk.....",
+  "....ww...pppppPPPPPPPPP...ww....",
+  "....ww...ppppppPPPPPPPP...ww....",
+  "..........ppppPPPPPPP...........",
+  "..........yyyyyyyyyyy...........",
+  "..........ppp.....PPP...........",
+  "..........ppp.....PPP...........",
+  "..........pp.......PP...........",
+  "..........pp.......PP...........",
+  ".........ppp.......PPP..........",
+  "......yppppp.......PPPPPy.......",
+  ".....y.pppp.........PPPP.y......",
+];
+const PAL_K = { h:'#3c2838', s:'#f0c8b0', b:'#2c50d8', B:'#18288a', r:'#d02a68', k:'#101018', w:'#d4dcea', y:'#f8d048' };
+const KRIS = [
+  "....hhhhhhh.......","...hhhhhhhhh......","..hhhhhhhhhhh.....","..hhhhhhhhhhh.....","..hhhhhhhhhhh.....",
+  "..hhhhhhhsshh.....","...hhhhhsssh......","....hhssssss......",".....ssssss.......","....rrbbbbbrr.....",
+  "...rrbbbybbbrr....","...rbbbbbbbbbr....","...rbbbbbbbbbr....","...rbBbbbbbBbr....","...rbBbbbbbBss.ww.",
+  "...rbbbbbbbbsswww.","...rrbbbbbbbb.www.","....rBBBBBBBB.ww..","....rbbbbbbbbw....",".....bbbbbbbb.....",
+  ".....bbbbbbbb.....",".....bbbb.bbb.....",".....bbb...bbb....",".....BBB...BBB....",".....BBB...BBB....",
+  ".....BBB...BBB....","....kkkk...kkkk...","....kkkk...kkkk...",
+];
+const PAL_S = { H:'#4a2a62', m:'#a868b8', w:'#fff', k:'#101018', j:'#3a3650', p:'#d84890', a:'#c8c8d4' };
+const SUSIE = [
+  "..HHHHHHHHH.........",".HHHHHHHHHHHH.......","HHHHHHHHHHHHHH......","HHHHHHHHHHHHHH......","HHHHHHHmmmmHHH......",
+  "HHHHHHmmmmmmHH......","HHHHHmmwkmwmHH......","HHHHHmmmmmmmH.......","HHHH.mmmwwwm........","HHH...mmmmm.....aa..",
+  "HH..jjjjjjjjj..aaaa.","H..jjjjjjjjjjjaaaaaa","..jjjjjjjjjjjmmaaaa.","..jjjpjjjjjpjmm.kk..","..jjjjjjjjjjj...kk..",
+  "..jjjjjjjjjjj...kk..","...jjjjjjjjj....kk..","...ppppppppp....kk..","...jjjjjjjjj........","...jjjj..jjjj.......",
+  "...jjj....jjj.......","...jjj....jjj.......","...jjj....jjj.......","...jjj....jjj.......","..kkkk....kkkk......","..kkkk....kkkk......",
+];
+const PAL_R = { G:'#1a6a4a', g:'#2a9a62', w:'#f4f0f0', k:'#101018', p:'#e86aa0', y:'#f8d048' };
+const RALSEI = [
+  ".......GG.........","......GGGG........",".....GGGGGG.......","....GGGGGGGG......","...GGGGGGGGGG.....",
+  "..GGGGGGGGGGGG....",".GGGGGGGGGGGGGG...","GGGGGGGGGGGGGGGG..","...wwwwwwwwww.....","...wwkwwwwkww.....",
+  "...wwwwwwwwww.....","...wpwwwwwwpw.....","....wwwwwwww......","...pppppppppp.....","..pppppppppppp....",
+  "..ggggggggggggg...","..gggggyggggggw...","..gggggggggggww...",".gggggggggggggg...",".ggggggggggggggg..",
+  "gggggggggggggggg..","gggggggggggggggg..","..kkkk....kkkk....",
+];
+const HEART = [".RR..RR.","RRRRRRRR","RRRRRRRR","RRRRRRRR",".RRRRRR.","..RRRR..","...RR...","........"];
+const SPR = {
+  jevil: makeSprite(JEVIL, PAL_J), jevilW: makeSprite(JEVIL, PAL_J, 2, '#fff'),
+  kris: makeSprite(KRIS, PAL_K), susie: makeSprite(SUSIE, PAL_S), ralsei: makeSprite(RALSEI, PAL_R),
+  krisW: makeSprite(KRIS, PAL_K, 2, '#fff'), susieW: makeSprite(SUSIE, PAL_S, 2, '#fff'), ralseiW: makeSprite(RALSEI, PAL_R, 2, '#fff'),
+  soul: makeSprite(HEART, { R:'#ff0000' }), soulW: makeSprite(HEART, { R:'#ffffff' }),
+  jhead: makeSprite(JEVIL.slice(0, 22).map(r => r.slice(4, 28)), PAL_J),
+};
+
+/* --------------------------- Utilidades ------------------------------- */
+const rand = (a, b) => a + Math.random()*(b-a);
+const irand = (a, b) => Math.floor(rand(a, b+1));
+const pick = a => a[Math.floor(Math.random()*a.length)];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b-a)*t;
+const TAU = Math.PI*2;
+
+function text(str, x, y, col='#fff', size=16, align='left'){
+  ctx.font = size + 'px ' + FONT; ctx.textAlign = align; ctx.textBaseline = 'top';
+  ctx.fillStyle = col; ctx.fillText(str, x, y);
+}
+function wrap(str, max){
+  const out = [];
+  for(const para of str.split('\n')){
+    // recuo de 2 espaços só para texto de caixa que começa com "* " (o balão do Jevil não tem recuo)
+    const lead = para.match(/^ */)[0];
+    let line = lead;
+    const ind = para.startsWith('* ') ? '  ' : '';
+    for(const w of para.slice(lead.length).split(' ')){
+      if((line + (line.trim() ? ' ' : '') + w).length > max){ out.push(line); line = ind + w; }
+      else line += (line.trim() ? ' ' : '') + w;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
+/* ------------------------------ Naipes -------------------------------- */
+function suitPath(g, kind, s){
+  g.beginPath();
+  if(kind === 'heart'){
+    g.moveTo(0, s*.9);
+    g.bezierCurveTo(-s*1.2, 0, -s*.9, -s*.95, 0, -s*.35);
+    g.bezierCurveTo(s*.9, -s*.95, s*1.2, 0, 0, s*.9);
+  } else if(kind === 'diamond'){
+    g.moveTo(0, -s); g.lineTo(s*.6, 0); g.lineTo(0, s); g.lineTo(-s*.6, 0); g.closePath();
+  } else if(kind === 'spade'){
+    g.moveTo(0, -s);
+    g.bezierCurveTo(s*1.25, -s*.1, s*.8, s*.75, 0, s*.3);
+    g.bezierCurveTo(-s*.8, s*.75, -s*1.25, -s*.1, 0, -s);
+    g.moveTo(0, s*.2); g.lineTo(s*.35, s); g.lineTo(-s*.35, s); g.closePath();
+  } else if(kind === 'club'){
+    const r = s*.42;
+    g.moveTo(r, -s*.5); g.arc(0, -s*.5, r, 0, TAU);
+    g.moveTo(-s*.45 + r, s*.1); g.arc(-s*.45, s*.1, r, 0, TAU);
+    g.moveTo(s*.45 + r, s*.1); g.arc(s*.45, s*.1, r, 0, TAU);
+    g.moveTo(0, -s*.1); g.lineTo(s*.3, s); g.lineTo(-s*.3, s); g.closePath();
+  }
+}
+function drawSuit(kind, x, y, s, rot=0, alpha=1, fill='#fff', sx=1){
+  ctx.save(); ctx.translate(x, y); ctx.rotate(rot); ctx.scale(sx, 1); ctx.globalAlpha *= alpha;
+  suitPath(ctx, kind, s); ctx.fillStyle = fill; ctx.fill('nonzero');
+  ctx.lineWidth = 2; ctx.strokeStyle = '#000'; ctx.stroke();
+  ctx.restore();
+}
+
+/* ------------------------------- Estado ------------------------------- */
+const BOX = CFG.box;
+const G = {
+  scene: 'title', t: 0, fast: false, practice: null, titleSel: 0, titleMode: null, prSel: 0,
+  tp: 0, tpShow: 0, tired: false,
+  jevil: null, party: [], items: [],
+  jturn: 0, turns: 0, hc: 0, chaosdance: 0, pfactor: 1, ifrNext: 1,
+  menu: null, actions: [], queue: [], fx: [], nums: [], box: null, soul: null, bullets: [], atk: null,
+  msg: null, bubble: null, flavor: '', flavorN: 0, shake: 0, dark: 0, white: 0, practiceHits: 0,
+};
+
+function newGame(practice){
+  const J = CFG.jevil;
+  G.jevil = { hp: J.hp, max: J.hp, at: J.at, df: J.df, x: 500, y: 160, hurtT: 0, swing: 0, anim: 0, form: 'body' };
+  G.party = CFG.party.map((p, i) => ({ ...p, max: p.hp, hp: p.hp, down: false, defend: false, flash: 0, x: 118 - i*14, y: 104 + i*64, act: null, slash: 0, spin: 0 }));
+  G.items = CFG.items.slice();
+  Object.assign(G, { tp: 0, tpShow: 0, tired: false, jturn: 0, turns: 0, hc: 0, chaosdance: 0, pfactor: 1, ifrNext: 1,
+    fx: [], nums: [], bullets: [], dark: 0, white: 0, fast: false, practice: practice ?? null, practiceHits: 0 });
+  Snd.startMusic();
+  if(G.practice !== null) return beginBullets(G.practice);
+  startMenu(flavorText());
+}
+
+/* --------------------------- Texto e balões --------------------------- */
+function showMsg(lines, done){
+  const pages = [];
+  for(const l of (Array.isArray(lines) ? lines : [lines]).map(tx)){
+    const w = wrap(l, 33);
+    for(let k = 0; k < w.length; k += 3) pages.push(w.slice(k, k + 3).join('\n'));
+  }
+  G.msg = { lines: pages, i: 0, n: 0, done };
+}
+function updateMsg(){
+  const m = G.msg; if(!m) return;
+  const full = m.lines[m.i];
+  if(m.n < full.length){ m.n++; if(m.n % 2 === 0 && full[m.n-1] !== ' ') Snd.play('text'); if(hit('x')) m.n = full.length; }
+  else if(hit('z')){ m.i++; m.n = 0; if(m.i >= m.lines.length){ G.msg = null; m.done && m.done(); } }
+}
+function drawMsg(){
+  const m = G.msg; if(!m) return;
+  wrap(m.lines[m.i].slice(0, m.n), 33).forEach((l, i) => text(l, 30, 384 + i*30));
+}
+function showBubble(lines, done){ G.bubble = { lines: lines.map(tx), i: 0, n: 0, wait: 0, done }; Snd.play('voice', lines[0]); }
+function updateBubble(){
+  const b = G.bubble; if(!b) return;
+  const full = b.lines[b.i];
+  if(b.n < full.length){ b.n++; if(b.n % 2 === 0) Snd.play('jtext'); if(hit('x')) b.n = full.length; }
+  else { b.wait++; if(hit('z') || b.wait > 60){ b.i++; b.n = 0; b.wait = 0; if(b.i >= b.lines.length){ G.bubble = null; b.done && b.done(); } } }
+}
+function drawBubble(){
+  const b = G.bubble; if(!b) return;
+  const lines = wrap(b.lines[b.i].slice(0, b.n), 15);
+  const bw = 262, bh = 24 + Math.max(3, lines.length)*18, bx = G.jevil.x - bw - 26, by = G.jevil.y - 6;
+  ctx.fillStyle = '#fff'; roundRect(bx, by, bw, bh, 8); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(bx+bw-2, by+20); ctx.lineTo(bx+bw+18, by+28); ctx.lineTo(bx+bw-2, by+36); ctx.fill();
+  lines.forEach((l, i) => text(l, bx+12, by+12 + i*18, '#000', 12));
+}
+function roundRect(x, y, w, h, r){ ctx.beginPath(); ctx.moveTo(x+r, y); ctx.arcTo(x+w, y, x+w, y+h, r); ctx.arcTo(x+w, y+h, x, y+h, r); ctx.arcTo(x, y+h, x, y, r); ctx.arcTo(x, y, x+w, y, r); ctx.closePath(); }
+
+/* ------------------------------ Menu ---------------------------------- */
+const BTN = { kris: ['FIGHT','ACT','ITEM','SPARE','DEFEND'], susie: ['FIGHT','MAGIC','ITEM','SPARE','DEFEND'], ralsei: ['FIGHT','MAGIC','ITEM','SPARE','DEFEND'] };
+const SPELLS = {
+  susie:  [ { name: 'Rude Buster', tp: 125, target: 'enemy', desc: { en: 'Rude#Damage', pt: 'Dano#Rude' } } ],
+  ralsei: [ { name: 'Pacify', tp: 40, target: 'enemy', desc: { en: 'Spare#TIRED foe', pt: 'Poupa#inimigo TIRED' } }, { name: 'Heal Prayer', tp: 80, target: 'party', desc: { en: 'Heal#Ally', pt: 'Cura#aliado' } } ],
+};
+const ACTS = [
+  { name: 'Check', tp: 0, desc: '' },
+  { name: 'Pirouette', tp: 50, desc: { en: 'Random#Chaos', pt: 'Caos#aleatório' } },
+  { name: 'Hypnosis', tp: 125, desc: { en: 'Induce#TIRED', pt: 'Deixa#TIRED' }, helpers: [1, 2] },
+];
+const FLAVOR = ['* The world is spinning, spinning.', '* The air crackles with freedom.', '* JEVIL is laughing incomprehensibly.', '* It feels like a whirlwind.', '* Smells like chaos.'];
+function flavorText(){
+  let m = pick(FLAVOR);
+  if(G.jturnNow === 17) m = '* JEVIL seems exhausted...?';
+  if(G.jturn === 16) m = '* CHAOS BOMB was prepared FOR YOU.';
+  if(G.jturn === 18) m = '* Something terrible is coming...!';
+  if(G.jturn >= 19) m = '* JEVIL\'s pulling out all the stops!';
+  if(G.tired) m = '* JEVIL is truly exhausted!';
+  return m;
+}
+
+function nextChooser(from){ for(let i = from; i < 3; i++){ const p = G.party[i]; if(!p.down && !p.act) return i; } return -1; }
+function startMenu(flavor){
+  G.scene = 'menu';
+  G.party.forEach(p => { p.act = null; p.defend = false; });
+  G.actions = [];
+  G.flavor = tx(flavor); G.flavorN = 0;
+  const c = nextChooser(0);
+  G.menu = { cur: c, btn: 0, sub: null, sel: 0 };
+  if(c < 0) return gameOver();
+}
+
+function updateMenu(){
+  const M = G.menu, P = G.party[M.cur];
+  if(G.flavorN < G.flavor.length){ G.flavorN++; if(G.flavorN % 2 === 0) Snd.play('text'); }
+  if(!M.sub){
+    if(hit('left')){ M.btn = (M.btn + 4) % 5; Snd.play('move'); }
+    if(hit('right')){ M.btn = (M.btn + 1) % 5; Snd.play('move'); }
+    if(hit('x')) return menuBack();
+    if(hit('z')){
+      const b = BTN[P.id][M.btn];
+      if(b === 'ITEM' && !G.items.length) return Snd.play('back');
+      Snd.play('select');
+      if(b === 'FIGHT') openSub('enemy', 'FIGHT');
+      else if(b === 'ACT') openSub('enemy', 'ACT');
+      else if(b === 'SPARE') openSub('enemy', 'SPARE');
+      else if(b === 'ITEM') openSub('item');
+      else if(b === 'MAGIC') openSub('magic');
+      else if(b === 'DEFEND') commit({ type: 'DEFEND' });
+    }
+    return;
+  }
+  const s = M.sub;
+  if(hit('x')){ Snd.play('back'); M.sub = s.back || null; M.sel = s.backSel || 0; return; }
+  if(s.kind === 'enemy'){
+    if(hit('z')){
+      if(s.purpose === 'ACT') return openSub('act', null, s);
+      if(s.purpose === 'FIGHT') return commit({ type: 'FIGHT' });
+      if(s.purpose === 'SPARE') return commit({ type: 'SPARE' });
+      if(s.purpose === 'SPELL') return commit({ type: 'SPELL', spell: s.spell });
+    }
+  } else if(s.kind === 'act' || s.kind === 'item' || s.kind === 'magic'){
+    const list = s.kind === 'act' ? ACTS : s.kind === 'item' ? G.items : SPELLS[P.id];
+    const n = list.length;
+    if(hit('up') && M.sel >= 2){ M.sel -= 2; Snd.play('move'); }
+    if(hit('down') && M.sel + 2 < n){ M.sel += 2; Snd.play('move'); }
+    if(hit('left') && M.sel % 2 === 1){ M.sel--; Snd.play('move'); }
+    if(hit('right') && M.sel % 2 === 0 && M.sel + 1 < n){ M.sel++; Snd.play('move'); }
+    if(hit('z')){
+      if(s.kind === 'act'){
+        const a = ACTS[M.sel];
+        if(!actUsable(a)) return Snd.play('back');
+        return commit({ type: 'ACT', act: a.name, tp: a.tp, helpers: a.helpers });
+      }
+      if(s.kind === 'item'){ Snd.play('select'); const item = G.items[M.sel]; return openSub('party', 'ITEM', s, { item, idx: M.sel, all: !!ITEMS[item].all }); }
+      const sp = list[M.sel];
+      if(sp.tp > G.tp) return Snd.play('back');
+      Snd.play('select');
+      return openSub(sp.target === 'enemy' ? 'enemy' : 'party', 'SPELL', s, { spell: sp });
+    }
+  } else if(s.kind === 'party'){
+    // item de equipe: o grupo todo fica selecionado e só confirma
+    if(s.all){ if(hit('z')){ const item = G.items.splice(s.idx, 1)[0]; return commit({ type: 'ITEM', item, target: M.cur, itemIdx: s.idx }); } return; }
+    if(hit('left') || hit('up')){ M.sel = (M.sel + 2) % 3; Snd.play('move'); }
+    if(hit('right') || hit('down')){ M.sel = (M.sel + 1) % 3; Snd.play('move'); }
+    if(hit('z')){
+      if(s.purpose === 'ITEM'){ const item = G.items.splice(s.idx, 1)[0]; return commit({ type: 'ITEM', item, target: M.sel, itemIdx: s.idx }); }
+      return commit({ type: 'SPELL', spell: s.spell, target: M.sel });
+    }
+  }
+}
+function actUsable(a){
+  if(a.tp > G.tp) return false;
+  if(a.helpers) return a.helpers.every(i => !G.party[i].down && !G.party[i].act);
+  return true;
+}
+function openSub(kind, purpose, back, extra={}){
+  const M = G.menu;
+  M.sub = { kind, purpose, back: back || null, backSel: M.sel, ...extra };
+  M.sel = kind === 'party' ? M.cur : 0;
+}
+function commit(a){
+  const M = G.menu; Snd.play('select');
+  a.who = M.cur;
+  const P = G.party[M.cur];
+  P.act = a;
+  a.cost = a.tp || (a.spell ? a.spell.tp : 0);
+  G.tp -= a.cost;
+  if(a.type === 'DEFEND'){ P.defend = true; G.tp = Math.min(CFG.tpMax, G.tp + CFG.defendTP); a.gain = CFG.defendTP; }
+  if(a.helpers) a.helpers.forEach(i => { G.party[i].act = { type: 'HELP', who: i }; });
+  G.actions.push(a);
+  M.sub = null; M.sel = 0;
+  const next = nextChooser(M.cur + 1);
+  if(next < 0) return execActions();
+  M.cur = next; M.btn = 0;
+}
+function menuBack(){
+  const M = G.menu;
+  if(!G.actions.length) return;
+  const a = G.actions.pop();
+  if(a.type === 'ITEM') G.items.splice(a.itemIdx, 0, a.item);
+  G.tp += a.cost || 0;
+  if(a.gain) G.tp -= a.gain;
+  if(a.helpers) a.helpers.forEach(i => { G.party[i].act = null; });
+  G.party[a.who].act = null; G.party[a.who].defend = false;
+  M.cur = a.who; M.btn = BTN[G.party[a.who].id].indexOf(a.type === 'SPELL' ? 'MAGIC' : a.type); M.sub = null;
+  Snd.play('back');
+}
+
+/* --------------------------- Execução --------------------------------- */
+function execActions(){
+  G.scene = 'exec'; G.menu = null;
+  const order = ['SPARE', 'ACT', 'ITEM', 'SPELL'];
+  G.queue = [];
+  for(const t of order) for(const a of G.actions) if(a.type === t) G.queue.push(a);
+  const fighters = G.actions.filter(a => a.type === 'FIGHT');
+  if(fighters.length) G.queue.push({ type: 'FIGHTQTE', fighters });
+  nextAction();
+}
+function nextAction(){
+  if(G.jevil.hp <= 0) return victory('violence');
+  if(G.ended) return;
+  const a = G.queue.shift();
+  if(!a) return startEnemyTurn();
+  const P = G.party[a.who];
+  if(a.type === 'ACT') return doAct(a, P);
+  if(a.type === 'SPARE') return showMsg([`* ${cap(P.name)} spared JEVIL!`, '* But its name wasn\'t YELLOW...'], nextAction);
+  if(a.type === 'ITEM') return doItem(a, P);
+  if(a.type === 'SPELL') return doSpell(a, P);
+  if(a.type === 'FIGHTQTE') return startQTE(a.fighters);
+}
+const cap = s => s[0] + s.slice(1).toLowerCase();
+const addTP = n => { G.tp = clamp(G.tp + n, 0, CFG.tpMax); };
+
+function doAct(a, P){
+  const J = G.jevil;
+  if(a.act === 'Check') return showMsg(['* JEVIL \n* There is no strategy to defeat the enemy. Good luck!'], nextAction);
+  if(a.act === 'Hypnosis'){
+    if(J.at > 10) J.at -= .5;
+    G.pfactor = .7;
+    const exhausted = G.hc >= 9;
+    if(exhausted) G.tired = true;
+    G.hc += 1;
+    Snd.play('hypnosis');
+    G.fx.push({ kind: 'hypno', t: 0, x: J.x + 20, y: J.y + 20 }); // global.monsterx/y do Jevil = x+20, y+20
+    const first = pick(['* Ralsei chanted something!', '* Susie spun something around!', '* Kris gazed strangely!']);
+    return showMsg([first + '\n* JEVIL\'s next attack weakened!\n' + (exhausted ? '* JEVIL\'s looking exhausted!' : '* JEVIL became more TIRED!')], nextAction);
+  }
+  if(a.act === 'Pirouette'){
+    Snd.play('pirouette'); P.spin = 24;
+    const r = [];
+    switch(G.chaosdance){
+      case 0: r.push('* What!\n* It was just foley!'); Snd.play(pick(['foley1', 'foley2', 'foley3'])); break;
+      case 1: if(J.df >= -16) J.df -= 4; Snd.play('weird'); r.push('* JEVIL felt at ease!\n* JEVIL\'s defense dropped!'); break;
+      case 2: G.ifrNext = .4; Snd.play('awkward'); r.push('* Awkward! Upcoming attack will hurt rapidly!'); break;
+      case 3: G.pfactor = .7; Snd.play('pendant'); r.push('* Tranquil!\n* The dance defended the party!'); break;
+      case 4: G.fx.push({ kind: 'bird', t: 0 }); Snd.play('bird'); r.push('* What!\n* It\'s nothing but a useless bird!'); break;
+      case 5: { const T = pick(G.party); healMember(T, irand(25, 55)); Snd.play('heal'); r.push('* It felt comforting!'); break; }
+      case 6: jumbleHP(); Snd.play('weird'); r.push('* Everyone\'s HP got jumbled up!'); break;
+      case 7: G.pfactor = 1.25; Snd.play('tp'); r.push('* JEVIL\'s upcoming move got powered up!'); break;
+      case 8: { const h = irand(36, 50); G.party.forEach(p => healMember(p, h)); Snd.play('applause'); r.push('* A perfect 10!'); break; }
+    }
+    G.hc += .5;
+    if(G.hc >= 9){ G.tired = true; r[0] += '\n* JEVIL\'s looking exhausted!'; }
+    return showMsg(['* Kris spun around!\n* JEVIL got slightly more TIRED, and...!', r[0]], nextAction);
+  }
+}
+function jumbleHP(){
+  const P = G.party, hp = P.map(p => p.hp), mx = P.map(p => p.max);
+  P.forEach((p, i) => { const j = (i + 1) % 3; p.hp = hp[j]; p.max = mx[j]; });
+  P.forEach(p => { if(p.hp < 1){ p.hp = 1; } p.down = false; p.hp = Math.min(p.hp, p.max); });
+}
+// scr_heal: soma e trava no máximo (quem já está acima do máximo não muda); quem estava com HP <= 0 e
+// chega a 0 ou mais volta com pelo menos ceil(max/6). Devolve quanto o HP subiu de verdade.
+function scrHeal(p, n){
+  const before = p.hp, below = p.hp <= 0;
+  if(p.hp <= p.max) p.hp = Math.min(p.max, p.hp + n);
+  if(below && p.hp >= 0){ p.hp = Math.max(p.hp, Math.ceil(p.max/6)); p.down = false; }
+  return p.hp - before;
+}
+function healMember(p, n){
+  scrHeal(p, n);
+  G.nums.push({ x: p.x + 20, y: p.y + 10, txt: p.hp >= p.max ? 'MAX' : String(n), col: '#00ff00', t: 0 });
+}
+function doItem(a, P){
+  const it = ITEMS[a.item];
+  Snd.play('item');
+  if(it.all){ G.party.forEach(p => healMember(p, it.heal)); return showMsg([`* ${cap(P.name)} used the ${a.item.toUpperCase()}!`, `* Everyone recovered ${it.heal} HP!`], nextAction); }
+  const T = G.party[a.target];
+  let n = it.heal;
+  // ReviveMint (spell 202): caído (HP <= 0) cura max + |HP|, ou seja, vai ao máximo; de pé cura ceil(max/2)
+  if(n === 'revive') n = T.hp <= 0 ? T.max + Math.abs(T.hp) : Math.ceil(T.max/2);
+  else if(typeof n === 'object') n = n[T.id];
+  healMember(T, n);
+  return showMsg([`* ${cap(P.name)} used the ${a.item.toUpperCase()}!`, T.hp >= T.max ? `* ${cap(T.name)}'s HP was maxed out.` : `* ${cap(T.name)} recovered ${n} HP!`], nextAction);
+}
+function doSpell(a, P){
+  const J = G.jevil;
+  if(a.spell.name === 'Pacify'){
+    if(G.tired){ Snd.play('spare'); return showMsg(['* Ralsei cast PACIFY!', '* JEVIL fell asleep, at last.'], () => victory('spare')); }
+    return showMsg(['* Ralsei cast PACIFY!', '* ...But the enemy wasn\'t TIRED.'], nextAction);
+  }
+  if(a.spell.name === 'Heal Prayer'){
+    const T = G.party[a.target], h = P.mag * 5; Snd.play('heal');
+    healMember(T, h);
+    return showMsg(['* Ralsei cast HEAL PRAYER!', `* ${cap(T.name)} recovered ${h} HP!`], nextAction);
+  }
+  if(a.spell.name === 'Rude Buster'){
+    const dmg = Math.max(1, Math.ceil(P.mag*5 + P.at*11 - J.df*3));
+    // obj_rudebuster_anim + obj_rudebuster_bolt: o dano entra quando o raio chega no Jevil
+    // Bônus (obj_rudebuster_bolt): apertar Z com o raio em voo, a partir do 4º passo, soma dano. No cap. 1 o código faz
+    // final_bolt = chosen_bolt, então qualquer aperto válido cai no caso chosen_bolt == final_bolt: +30 e snd_scytheburst.
+    G.fx.push({ kind: 'buster', t: 0, who: P, onHit: f => hurtJevil(dmg + (f.chosen ? 30 : 0), P.col, 0) });
+    return showMsg(['* Susie cast RUDE BUSTER!'], nextAction);
+  }
+}
+function hurtJevil(dmg, col, i){
+  const J = G.jevil;
+  J.hp = Math.max(0, J.hp - dmg);
+  J.hurtT = 18; J.swing = clamp(20 + dmg/5, 30, 150);
+  G.nums.push({ x: J.x + 10, y: J.y + 20 - i*26, txt: String(dmg), col, t: -i*4 });
+}
+
+/* ------------------------------ FIGHT --------------------------------- */
+const QTE_TARGET = 110;
+// obj_attackpress (modo de um botão, flag[13] = 0): uma barra por lutador, cada uma com um "bolt"
+// que anda 8 px por quadro até o alvo; Z acerta o bolt mais atrasado dentro da janela (-5, 15).
+function startQTE(fighters){
+  G.scene = 'qte';
+  const who = fighters.map(a => a.who).sort(() => Math.random() - .5);
+  const diff = 12, bolts = [];
+  let off = 0, last = -1;
+  who.forEach((w, i) => {
+    off += last;
+    bolts.push({ who: w, frame: 30 + off, alive: true });
+    if(i < who.length - 1 && last !== 0) last = pick([0, diff, diff*1.5]);
+    else last = pick([diff, diff*1.5]);
+  });
+  G.qte = { who: fighters.map(a => a.who), bolts, bx: 0, img: 0, pts: {}, done: {}, order: 0, post: 0, fade: 0,
+    press: { kris: 0, susie: 0, ralsei: 0 }, trail: [], bursts: [] };
+}
+function qteResolve(Q, w){
+  Q.done[w] = true;
+  const P = G.party[w], pts = Q.pts[w] || 0, i = Q.order++;
+  P.slash = 16;
+  if(pts <= 0){ G.nums.push({ x: G.jevil.x + 10, y: G.jevil.y + 20 - i*26, txt: 'MISS', col: '#c0c0c0', t: 0 }); return; }
+  const dmg = Math.max(0, Math.round(P.at * pts / 20 - G.jevil.df * 3));
+  addTP(Math.min(10, Math.round(pts / 15)));
+  Snd.play('slash');
+  hurtJevil(dmg, P.col, i); setTimeout(() => Snd.play('damage'), 120);
+}
+function updateQTE(){
+  const Q = G.qte;
+  for(const b of Q.bolts) if(b.frame - Q.bx < -5) b.alive = false;
+  if(Q.img === 0) for(const b of Q.bolts) if(b.alive && b.frame - Q.bx >= 0) Q.trail.push({ who: b.who, d: b.frame - Q.bx, a: .4 });
+  for(const w of Q.who) if(!Q.done[w] && !Q.bolts.some(b => b.alive && b.who === w)) qteResolve(Q, w);
+  if(hit('z')){
+    for(const k in Q.press) Q.press[k] = 5;
+    let top = 999, pick1 = null, dual = null;
+    for(const b of Q.bolts){
+      if(!b.alive) continue;
+      const c = b.frame - Q.bx;
+      if(c < 15 && c > -5){ if(c === top) dual = b; if(c < top){ top = c; pick1 = b; } }
+    }
+    for(const b of [pick1, dual]){
+      if(!b) continue;
+      const p = Math.abs(top), P = G.party[b.who];
+      const add = p === 0 ? 150 : p === 1 ? 120 : p === 2 ? 110 : 100 - p*2;
+      Q.pts[b.who] = (Q.pts[b.who] || 0) + add;
+      Q.bursts.push({ who: b.who, d: b.frame - Q.bx, t: 0, crit: p === 0 });
+      if(p === 0) Snd.play('crit');
+      b.alive = false;
+    }
+  }
+  Q.img = (Q.img + 1) % 2; Q.bx++;
+  for(const k in Q.press) Q.press[k]--;
+  if(Q.who.every(w => Q.done[w])){
+    Q.post++;
+    if(Q.post > 50) Q.fade += .08;
+    if(Q.fade > 1){ G.qte = null; G.scene = 'exec'; nextAction(); }
+  }
+}
+function drawQTE(){
+  const Q = G.qte;
+  Q.rows.forEach((r, i) => {
+    const P = G.party[r.who], y = 374 + i*34;
+    ctx.strokeStyle = P.col; ctx.lineWidth = 2; ctx.strokeRect(QTE_TARGET - 50, y, 520, 30);
+    ctx.fillStyle = P.col; ctx.globalAlpha = .3; ctx.fillRect(QTE_TARGET - 6, y + 2, 12, 26); ctx.globalAlpha = 1;
+    text(P.name[0], QTE_TARGET - 80, y + 8, P.col, 16);
+    if(!r.done || r.flash < 10){
+      ctx.globalAlpha = r.done ? 1 - r.flash/10 : 1; ctx.fillStyle = r.done && r.pts >= 150 ? '#ffff00' : '#fff';
+      ctx.fillRect(r.x - 3, y + 2, 6, 26); ctx.globalAlpha = 1;
+    }
+  });
+}
+
+/* ----------------------- Roteiro do Jevil (jturn) ---------------------- */
+// [fala, ataque ou lista para sortear, próximo jturn]
+const SCRIPT = {
+  0:  ['CHAOS, CHAOS,\n\nCATCH ME\nIF YOU CAN!', 0, 1],
+  1:  ['SHALL WE\nPLAY THE\nRING-AROUND?', 1, 2],
+  2:  ['MY HEARTS GO\nOUT TO ALL\nYOU SINNERS!', 2, 3],
+  3:  ['HA, HA, LET\'S\nMAKE THE\nDEVILSKNIFE.', 3, 4],
+  4:  [null, [0, 1, 2, 3], 4],
+  5:  ['PIIP PIIP,\nLET\'S RIDE THE\nCAROUSEL GAME.', 4, 6],
+  6:  ['HEE HEE,\nHAVING FUN!?\nJOIN THE\nCLUB!', 5, 7],
+  7:  ['HEARTS,\nDIAMONDS,\nI CAN DO\nANYTHING!', 6, 8],
+  8:  ['WHO KEEPS\nSPINNING THE\nWORLD\nAROUND?', 7, 9],
+  9:  [null, [4, 5, 6, 7], 9],
+  10: ['YOU KIDS ARE\nREALLY\nKEEPING UP!', 8, 11],
+  11: ['NU-HA!!\nI NEVER HAD\nSUCH FUN,\nFUN!!', 9, 12],
+  12: ['A BEAUTY IS\nJOYING IN\nMY HEART!', 10, 13],
+  13: ['EVEN\nDEVILSKNIFE\nIS SMILING!', 11, 14],
+  14: [null, [8, 9, 10, 11], 14],
+  15: ['IT\'S SO\nEXCITING...\nI CAN\'T\nTAKE IT!!!', 12, 16],
+  16: ['THIS IS IT,\nBOISENGIRLS!\nSEE YA!', 13, 17],
+  17: ['ENOUGH!!\nYOU KIDS\nTIRED ME UP!', 14, 18],
+  18: ['KIDDING!!\nHERE\'S MY\nFINAL CHAOS!', 15, 19],
+  19: [null, [0, 4, 7, 8, 10, 11, 12, 13, 13, 13], 19],
+};
+// obj_joker_Step_0 (lang_en.json): falas dos turnos de espera, rr = choose(0, 1, 2, 3)
+const RANDOM_LINES = [['A CHAOS,\nCHAOS!', 'PLEASE, IT\'S\nJUST A\nSIMPLE\nCHAOS.'], ['I CAN DO\nANYTHING!!'], ['THIS BODY\nCANNOT BE\nKILLED!', 'THESE\nCURTAINS\nARE REALLY\nON FIRE!'], ['IT\'S ALL\nTOO MUCH\nFUN!!!']];
+
+function scriptTurn(){
+  G.turnId = (G.turnId || 0) + 1;
+  const J = G.jevil, f = J.hp / J.max, hc = G.hc, T = G.turns;
+  if(f <= .15 && G.jturn < 17) G.jturn = 17;
+  if(G.jturn === 4 && (f <= .8 || (hc >= 2 && T >= 5 - hc))) G.jturn = 5;
+  if(G.jturn === 9 && (f <= .6 || (hc >= 4 && T >= 11 - hc))) G.jturn = 10;
+  if(G.jturn === 14 && (f <= .4 || (hc >= 6 && T >= 17 - hc))) G.jturn = 15;
+  if(G.jturn >= 19){
+    if(J.df > -10) J.df -= 3;
+    if(J.at < 11) J.at += .5;
+    if(!G.tired && T >= 29 - hc) G.tired = true;
+  }
+  const S = SCRIPT[Math.min(G.jturn, 19)];
+  const line = S[0] || pick(pick(RANDOM_LINES));
+  const atk = Array.isArray(S[1]) ? pick(S[1]) : S[1];
+  G.jturnNow = G.jturn;
+  G.jturn = S[2];
+  return { line, atk };
+}
+function startEnemyTurn(){
+  G.scene = 'etalk';
+  const { line, atk } = scriptTurn();
+  // obj_joker: na fala já escolhe o alvo (scr_targetall nos ataques 2, 5, 9, 13 e 15; senão scr_randomtarget)
+  const alive = G.party.map((p, i) => i).filter(i => !G.party[i].down);
+  G.targeted = [2, 5, 9, 13, 15].includes(atk) ? alive : [pick(alive)];
+  showBubble([line], () => beginBullets(atk));
+}
+
+/* --------------------------- Fase de desvio --------------------------- */
+function beginBullets(idx){
+  const def = ATTACKS[idx];
+  G.scene = 'bullets';
+  G.atk = { def, idx, t: 0, timer: def.dur, d: {}, mult: def.mult, target: def.target, gp: def.gp, over: false };
+  G.box = { open: 0, closing: false, gone: false, alpha: 1 };
+  const k = G.party.find(p => !p.down) || G.party[0];
+  G.soul = { x: BOX.cx, y: BOX.cy, sx: k.x + 20, sy: k.y + 30, enter: 0, iframe: 0, graze: 0,
+    speed: def.soulSpeed || CFG.soulSpeed, minX: BOX.cx - BOX.inner + 8, maxX: BOX.cx + BOX.inner - 8, minY: BOX.cy - BOX.inner + 8, maxY: BOX.cy + BOX.inner - 8 };
+  G.bullets = []; G.dark = 0; G.white = 0;
+  G.jevil.form = def.form || 'body';
+  Snd.play('appear');
+  G.atk.needInit = true;
+}
+function finishEnemyTurn(){
+  G.bullets = []; G.atk = null; G.box = null; G.dark = 0; G.white = 0;
+  G.jevil.form = 'body';
+  if(G.practice !== null){ G.scene = 'title'; G.titleMode = 'practice'; Snd.stopMusic(); return; }
+  G.scene = 'exec';
+  G.turns++;
+  G.pfactor = 1; G.ifrNext = 1;
+  G.chaosdance = G.chaosdance >= 8 ? 0 : G.chaosdance + 1;
+  // scr_mnendturn: quem está caído recupera ceil(max/8); o número mostrado é o quanto subiu, ou UP se voltou a ter HP >= 1
+  G.party.forEach(p => { if(p.hp <= 0){ const d = scrHeal(p, Math.ceil(p.max/8)); Snd.play('heal');
+    G.nums.push({ x: p.x + 20, y: p.y + 10, txt: p.hp >= 1 ? 'UP' : String(d), col: '#00ff00', t: 0 }); } });
+  if(G.party.every(p => p.down)) return gameOver();
+  startMenu(flavorText());
+}
+
+function partyHit(){
+  const S = G.soul, A = G.atk;
+  if(S.iframe > 0) return;
+  S.iframe = Math.round(CFG.iframes * G.ifrNext);
+  G.shake = 6; Snd.play('hurt');
+  if(G.practice !== null){ G.practiceHits++; return; }
+  const alive = G.party.filter(p => !p.down);
+  if(!alive.length) return;
+  if(A.target === 'chaos'){
+    const avg = G.party.reduce((a, p) => a + p.hp, 0) / 3;
+    alive.forEach(p => {
+      if(avg >= 10){ const nh = Math.ceil(p.hp * .7); showDmg(p, p.hp - nh); p.hp = nh; }
+      else hurtMember(p, 124);
+    });
+    if(G.party.every(p => p.down)) G.loseNow = true;
+    return;
+  }
+  // alvo fixo do turno; se ele já caiu, scr_damage sorteia outro (scr_randomtarget)
+  const T0 = G.party[(G.targeted || [])[0]];
+  const targets = A.target === 3 ? alive : [T0 && !T0.down ? T0 : pick(alive)];
+  const base = G.jevil.at * A.mult * G.pfactor;
+  targets.forEach(p => {
+    let dmg = Math.ceil(base - p.df * 3);
+    if(p.defend) dmg = Math.ceil(dmg * 2/3);
+    hurtMember(p, Math.max(1, dmg));
+  });
+  if(G.party.every(p => p.down)) G.loseNow = true; // scr_gameover na hora, sem fechar a caixa
+}
+function showDmg(p, n){ p.flash = 12; G.nums.push({ x: p.x + 20, y: p.y + 10, txt: String(n), col: '#fff', t: 0 }); }
+function hurtMember(p, dmg){
+  p.hp -= dmg; showDmg(p, dmg);
+  if(p.hp <= 0){
+    p.down = true; p.hp = Math.min(p.hp, Math.round(-p.max/2)); Snd.play('down');
+    G.nums[G.nums.length-1].txt = 'DOWN'; G.nums[G.nums.length-1].col = '#ff0000';
+  }
+}
+
+/* ----------------------------- Balas ---------------------------------- */
+// Ângulos em graus no padrão do GameMaker (0 = direita, 90 = cima).
+const D2R = Math.PI/180;
+const vel = (deg, sp) => [Math.cos(deg*D2R)*sp, -Math.sin(deg*D2R)*sp];
+const dirTo = (x1, y1, x2, y2) => Math.atan2(-(y2-y1), x2-x1) / D2R;
+const heart = () => [G.soul.x, G.soul.y];
+
+function B(o){
+  const b = Object.assign({ x: 0, y: 0, vx: 0, vy: 0, gx: 0, gy: 0, fric: 0, maxV: 0, hw: 4, hh: 4, ang: 0, rot: 0, vr: 0,
+    t: 0, alpha: 1, fadeIn: 0, harm: true, keep: false, kind: 'spade', s: 9, grazed: false, dead: false }, o);
+  G.bullets.push(b); return b;
+}
+function stepBullet(b){
+  b.t++;
+  if(b.upd) b.upd(b);
+  if(b.dead) return;
+  b.vx += b.gx; b.vy += b.gy;
+  if(b.maxV){ const sp = Math.hypot(b.vx, b.vy); if(sp > b.maxV){ b.vx *= b.maxV/sp; b.vy *= b.maxV/sp; } }
+  if(b.fric){ const sp = Math.hypot(b.vx, b.vy); if(sp > 0){ const n = Math.max(0, sp - b.fric); b.vx *= n/sp; b.vy *= n/sp; } }
+  b.x += b.vx; b.y += b.vy; b.rot += b.vr;
+  if(!b.noCull && (b.x < -40 - b.hw*2 || b.x > W + 40 + b.hw*2 || b.y < -140 || b.y > H + 40 + b.hh*2)) b.dead = true;
+}
+function hitRect(b, px, py, r){
+  const dx = px - b.x, dy = py - b.y, c = Math.cos(-b.ang), s = Math.sin(-b.ang);
+  const lx = dx*c - dy*s, ly = dx*s + dy*c;
+  const qx = clamp(lx, -b.hw, b.hw), qy = clamp(ly, -b.hh, b.hh);
+  return (lx-qx)**2 + (ly-qy)**2 < r*r;
+}
+function grazeRect(b, px, py){
+  const c = Math.abs(Math.cos(b.ang)), s = Math.abs(Math.sin(b.ang));
+  const ex = b.hw*c + b.hh*s, ey = b.hw*s + b.hh*c;
+  return Math.abs(px - b.x) < ex + CFG.grazeBox && Math.abs(py - b.y) < ey + CFG.grazeBox;
+}
+function updateBullets(){
+  const S = G.soul, A = G.atk;
+  for(const b of G.bullets){
+    stepBullet(b);
+    // obj_grazebox colide com qualquer obj_collidebullet, mesmo inativo (active = 0): b.graze libera o raspão sem dano
+    if(b.dead || (!b.harm && !b.graze) || b.t <= b.fadeIn) continue;
+    if(b.harm && hitRect(b, S.x, S.y, CFG.soulR)){ partyHit(); if(!b.keep){ b.dead = true; continue; } }
+    if(S.iframe <= 0 && grazeRect(b, S.x, S.y)){
+      // grazepoints/timepoints são de cada tiro; quase todos herdam os do controlador (A.gp, timepoints 1)
+      const gp = b.gp ?? A.gp, tpt = b.tpt ?? CFG.timePoints;
+      if(!b.grazed){ b.grazed = true; addTP(gp); if(A.timer >= 10) A.timer -= tpt; Snd.play('graze'); S.graze = 8; if(b.onGraze) b.onGraze(b); }
+      else { addTP(gp/20); if(A.timer >= 10) A.timer -= tpt/20; S.graze = Math.max(S.graze, 3); }
+    }
+  }
+  G.bullets = G.bullets.filter(b => !b.dead);
+}
+function drawBullets(){
+  for(const b of G.bullets){
+    const fa = b.fadeIn ? Math.min(1, b.t / b.fadeIn) : 1;
+    ctx.globalAlpha = b.alpha * fa;
+    if(b.draw) b.draw(b);
+    else if(b.kind === 'pellet'){ ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, TAU); ctx.fill(); ctx.stroke(); }
+    else if(b.kind === 'vdiamond') drawSuit('diamond', b.x, b.y, 8, 0, 1, '#fff', .55);
+    else if(b.kind === 'ldiamond') drawSuit('diamond', b.x, b.y, b.s, b.ang + Math.PI/2, 1, '#fff', .45);
+    else drawSuit(b.kind, b.x, b.y, b.s, b.ang + Math.PI/2);
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* --------------------------- Peças dos ataques ------------------------ */
+// Jevil aparece (teleporte), cresce, atira e some. Não fere.
+function teleport(A, fire){
+  const [cx, cy] = [BOX.cx, BOX.cy];
+  const x = cx + pick([-1, 1]) * (100 + rand(0, 100)), y = cy + pick([-1, 1]) * rand(0, 100);
+  B({ x, y, harm: false, kind: 'tele', noCull: true, draw: drawTele, upd: b => {
+    b.sc = b.t <= 5 ? b.t/5 : b.t <= 23 ? 1 : Math.max(0, 1 - (b.t - 23)/5);
+    if(b.t === 13){ fire(b); Snd.play('shoot'); }
+    if(b.t >= 28) b.dead = true;
+  } });
+}
+function drawTele(b){
+  const s = b.sc || 0, w = SPR.jevil.width*s, h = SPR.jevil.height*s;
+  ctx.drawImage(SPR.jevil, b.x - w/2, b.y - h/2, w, h);
+}
+// Anel de 10 espadas (ataques 1 e 7)
+function ring(A, grav, dirSign){
+  const [cx, cy] = [BOX.cx, BOX.cy], base = rand(0, 360);
+  const list = [];
+  for(let i = 0; i < 10; i++){
+    const a = base + i*36*dirSign;
+    const [ox, oy] = vel(a, 300);
+    const inward = a + 180;
+    const b = B({ kind: 'spade', x: cx + ox, y: cy + oy, s: 9, hw: 8.5, hh: 5.5, ang: -inward*D2R, noCull: true });
+    // obj_spadering: speed 26, x0.87 por 14 quadros, alpha +0.1/quadro, cinza (c0c0c0) até soltar; 1ª solta em t=18, depois a cada 4
+    b.sp = 26; b.inward = inward; b.launch = 19 + i*4; b.alpha = 0; b.gray = true;
+    b.upd = b => {
+      if(b.t <= 16) b.alpha = Math.min(1, .1*(b.t - 1));
+      if(b.t <= 14){ [b.vx, b.vy] = vel(b.inward, b.sp); b.sp *= .87; }
+      else if(b.t < b.launch){ b.vx = b.vy = 0; }
+      else if(b.t === b.launch){ [b.vx, b.vy] = vel(b.inward, -3.4); [b.gx, b.gy] = vel(b.inward, grav); b.noCull = false; b.gray = false; }
+    };
+    list.push(b);
+  }
+}
+// Bomba que cai pelos lados e explode (ataques 2, 5, 9, 13)
+function bomb(type){
+  const [cx] = [BOX.cx];
+  const x = Math.random() < .5 ? cx - 180 - rand(0, 100) : cx + 180 + rand(0, 100);
+  const stop = 20 + irand(0, 16);
+  B({ kind: 'bomb', x, y: -80, vy: 10, harm: false, noCull: true, btype: type, draw: drawBomb, upd: b => {
+    if(b.t === stop){ b.vy = 0; }
+    if(b.t === stop + 3){ b.dead = true; explode(b.x, b.y, type); }
+  } });
+}
+function explode(x, y, type){
+  Snd.play('bomb'); G.shake = 4;
+  G.fx.push({ kind: 'boom', x, y, t: 0 });
+  const [hx, hy] = heart(), aim = dirTo(x, y, hx, hy);
+  if(type === 'heart'){
+    const c = B({ kind: 'center', x, y, harm: false, noCull: true, draw: () => {}, upd: c => {
+      if(c.t === 10){ [c.vx, c.vy] = vel(dirTo(c.x, c.y, G.soul.x, G.soul.y), 7); c.noCull = false; }
+      if(c.t > 10 && (c.x < -80 || c.x > W + 80 || c.y < -80 || c.y > H + 80)) c.dead = true;
+    } });
+    for(let i = 0; i < 4; i++){
+      B({ kind: 'heart', x, y, s: 6, hw: 2.5, hh: 2.5, noCull: true, a0: i*90, R: 0, upd: b => {
+        if(c.dead){ b.dead = true; return; }
+        b.R = Math.min(40, b.R + 4); b.a0 += 3;
+        const [ox, oy] = vel(b.a0, b.R); b.x = c.x + ox; b.y = c.y + oy; b.vx = b.vy = 0; b.ang = -(b.a0 + 90)*D2R;
+      } });
+    }
+  } else if(type === 'club'){
+    for(const d of [-20, 0, 20]){ const a = aim + d, [vx, vy] = vel(a, 8); B({ kind: 'club', x, y, vx, vy, s: 8, hw: 9, hh: 3, ang: -a*D2R, gp: 3, tpt: 2 }); }
+  } else if(type === 'spade'){
+    for(let i = 0; i < 12; i++){ const a = aim + i*30, [vx, vy] = vel(a, 8); B({ kind: 'spade', x, y, vx, vy, s: 9, hw: 8.5, hh: 5.5, ang: -a*D2R }); }
+  } else if(type === 'diamond'){
+    for(const sp of [11, 10, 9]){ const [vx, vy] = vel(aim, sp); B({ kind: 'ldiamond', x, y, vx, vy, s: 9, hw: 7, hh: 1.5, ang: -aim*D2R }); }
+  }
+}
+// Devilsknife (ataques 3 e 11)
+function knives(A, sinSpeed, accel){
+  const d = A.d; d.sine = 0; d.dir = rand(0, 70); d.ds = pick([-1, 1]) * 1.5; d.accel = accel;
+  for(let k = 0; k < 4; k++){
+    B({ kind: 'knife', x: BOX.cx, y: BOX.cy, hw: 12, hh: 15, fadeIn: 25, keep: true, noCull: true, k, draw: drawKnife, vr: 0, spinDir: k % 2 ? 1 : -1, upd: b => {
+      const R = Math.cos(d.sine/18) * 150;
+      const [ox, oy] = vel(d.dir + 90*b.k, R);
+      b.x = BOX.cx + ox; b.y = BOX.cy + oy; b.vx = b.vy = 0;
+      if(b.t <= 25) return; // chasecon 1: só aparece (alpha +.04), parada
+      b.spin = Math.min(10, (b.spin || 0) + 1);
+      b.rot += b.spin * b.spinDir * D2R; b.ang = b.rot;
+    } });
+  }
+  d.step = () => {
+    if(G.atk.t <= 25) return;
+    d.sine += sinSpeed;
+    if(d.accel && Math.abs(d.ds) < 3) d.ds += Math.sign(d.ds) * .01;
+    d.dir += d.ds;
+  };
+}
+// Carrossel (ataques 4 e 8)
+function carousel(A, n, sinerOf, sinspeed, vsinOf, vsignOf){
+  for(const row of [-80, 0, 80]) for(let j = 0; j < n; j++){
+    const b = B({ kind: 'horse', x: BOX.cx, y: BOX.cy + row, hw: 14, hh: 7, keep: true, noCull: true, fadeIn: 25, draw: drawHorse });
+    b.siner = sinerOf(j); b.vsin = vsinOf(j); b.vsign = vsignOf(j);
+    b.upd = b => {
+      b.siner += sinspeed; b.vsin += 1;
+      b.x = BOX.cx - 150*Math.sin(b.siner/20);
+      b.front = Math.cos(b.siner/20) < 0;
+      b.harm = b.front;
+      b.y += 3.5 * Math.sin(b.vsin/10) * b.vsign; b.vx = b.vy = 0;
+    };
+  }
+}
+// Ouros que sobem (ataques 6 e 14)
+function riseDiamond(x, y, after){
+  B({ kind: 'vdiamond', x, y, vy: 3, hw: 2.5, hh: 6, fadeIn: 10, tpt: 2, upd: b => { if(b.t === 10) after(b); } });
+}
+
+/* ----------------------------- Ataques -------------------------------- */
+const ATTACKS = [
+  { name: 'Teleport + spade fan', namePt: 'Teleporte + leque de espadas', dur: 240, mult: 5, target: 1, gp: 2, hide: true,
+    update(A){ if(A.t % 20 === 1 && A.timer >= 30) teleport(A, b => {
+      const a = dirTo(b.x, b.y, G.soul.x, G.soul.y);
+      for(const o of [-36, -18, 0, 18, 36]){ const [vx, vy] = vel(a + o, 4.5); B({ kind: 'spade', x: b.x, y: b.y, vx, vy, s: 5, hw: 3.5, hh: 2, ang: -(a+o)*D2R }); }
+    }); } },
+  { name: 'Spade ring', namePt: 'Anel de espadas', dur: 240, mult: 5, target: 1, gp: 3,
+    update(A){ if(A.t % 60 === 1) ring(A, .4, 1); } },
+  { name: 'Heart bombs', namePt: 'Bombas de copas', dur: 240, mult: 4, target: 3, gp: 3, hide: true,
+    update(A){ if(A.t % 20 === 1) bomb('heart'); } },
+  { name: 'Devilsknife', dur: 240, mult: 6, target: 1, gp: 3, form: 'knife',
+    init(A){ knives(A, 1.4, true); Snd.play('laugh'); }, update(A){ A.d.step(); if(A.t % 20 === 0) Snd.play('spin'); } },
+  { name: 'Carousel', namePt: 'Carrossel', dur: 240, mult: 5, target: 1, gp: 2,
+    init(A){ Snd.play('anything'); carousel(A, 7, j => 18*j, 1.15, j => 9*j, () => 1); } , update(){} },
+  { name: 'Club bombs', namePt: 'Bombas de paus', dur: 300, mult: 4, target: 3, gp: 3, hide: true,
+    update(A){ if(A.t % 12 === 1) bomb('club'); } },
+  { name: 'Rising diamonds', namePt: 'Ouros subindo', dur: 240, mult: 5, target: 1, gp: 5,
+    update(A){ if(A.t % 4 === 1){ const near = Math.random() < .25; riseDiamond(G.soul.x + (near ? rand(-10, 10) : rand(-100, 100)), BOX.cy + 100, b => { b.gy = -.5; }); } } },
+  { name: 'Spiral ring', namePt: 'Anel em espiral', dur: 240, mult: 5, target: 1, gp: 2, soulSpeed: 5,
+    update(A){ if(A.t % 54 === 1) ring(A, .45, pick([-1, 1])); } },
+  { name: 'Alternating carousel', namePt: 'Carrossel alternado', dur: 240, mult: 5, target: 1, gp: 3,
+    init(A){ Snd.play('anything'); const v = rand(0, 63); carousel(A, 6, j => 21*j, 1.1, () => v, j => j % 2 ? -1 : 1); }, update(){} },
+  { name: 'Spade bombs', namePt: 'Bombas de espadas', dur: 270, mult: 4, target: 3, gp: 4, hide: true,
+    update(A){ if(A.t % 12 === 1) bomb('spade'); } },
+  { name: 'Dark clubs', namePt: 'Paus escuros', dur: 240, mult: 5, target: 1, gp: 1,
+    init(A){ A.d.bottom = true; },
+    update(A){
+      if(A.t % 18 !== 1) return;
+      const angs = A.d.bottom ? [225, 315] : [45, 135]; A.d.bottom = !A.d.bottom;
+      const a = pick(angs), [hx, hy] = heart(), [ox, oy] = vel(a, 360);
+      const big = B({ kind: 'darkclub', x: hx + ox, y: hy + oy, harm: false, graze: true, hw: 12, hh: 12, noCull: true, fric: 1, draw: drawDarkClub });
+      [big.vx, big.vy] = vel(a + 180, 20); big.gdir = a + 180;
+      big.burst = 0;
+      big.upd = b => {
+        if(b.t === 20 || b.t === 22 || b.t === 24){
+          // move_towards_point aponta o paus para o coração; cada bola é uma folha do sprite (fora do centro),
+          // desenhada com image_angle = direção do paus: b em (+8,0), c em (-2,+8), a em (-2,-8). Sem som.
+          const dir = dirTo(b.x, b.y, G.soul.x, G.soul.y), aim = dir + 2*b.burst; b.burst++;
+          const c = Math.cos(dir*D2R), s = Math.sin(dir*D2R);
+          for(const [o, pi, lx, ly] of [[-2, 1, 8, 0], [-21, 2, -2, 8], [17, 0, -2, -8]]){
+            const [vx, vy] = vel(aim + o, 5), rx = lx*c + ly*s, ry = -lx*s + ly*c;
+            B({ kind: 'pellet', x: b.x + rx, y: b.y + ry, vx, vy, hw: 9, hh: 9, pi, pang: dir, ox: -rx, oy: -ry });
+          }
+        }
+        // dtimer 26: vira obj_afterimage parado, que perde .04 de alpha por passo
+        if(b.t >= 26){ b.graze = false; b.vx = b.vy = 0; b.alpha -= .04; if(b.alpha <= 0) b.dead = true; }
+      };
+    } },
+  { name: 'Devilsknife + big scythe', namePt: 'Devilsknife + foice grande', dur: 240, mult: 6, target: 1, gp: 3, form: 'knife',
+    init(A){ knives(A, 1.3, false); A.d.side = pick([-1, 1]); Snd.play('laugh'); },
+    update(A){
+      A.d.step();
+      // scythetimer começa em -5, a foice nasce em 60 e o ciclo volta para 59 em 105
+      if(A.t >= 65 && (A.t - 65) % 46 === 0){
+        const s = A.d.side; A.d.side = -s;
+        B({ kind: 'bigknife', x: BOX.cx + 150*s, y: BOX.cy + 60*s, hw: 24, hh: 30, keep: true, noCull: true, fadeIn: 10, big: 2, draw: drawKnife, upd: b => {
+          if(b.t < 10) b.rot -= 10*s*D2R; b.ang = b.rot;
+          if(b.t >= 25 && b.t <= 29) b.vx = clamp(b.vx - 3*s, -15, 15);
+          if(b.t >= 40){ b.alpha = Math.max(0, 1 - (b.t - 40)/5); if(b.t >= 45) b.dead = true; }
+        } });
+        Snd.play('spin');
+      }
+    } },
+  { name: 'Fast teleport', namePt: 'Teleporte rápido', dur: 240, mult: 5, target: 1, gp: 2, hide: true,
+    update(A){ if(A.t % 9 === 1 && A.timer >= 20) teleport(A, b => {
+      const a = dirTo(b.x, b.y, G.soul.x, G.soul.y), [vx, vy] = vel(a, 8);
+      B({ kind: 'ldiamond', x: b.x, y: b.y, vx, vy, s: 7, hw: 5, hh: 1, ang: -a*D2R });
+    }); } },
+  { name: 'Random bombs', namePt: 'Bombas aleatórias', dur: 330, mult: 4, target: 3, gp: 4, hide: true,
+    update(A){ if(A.t % 12 === 1){ let t = pick(['spade', 'club', 'diamond', 'heart']); if(t === 'heart') t = pick(['spade', 'club', 'diamond', 'heart']); bomb(t); } } },
+  { name: 'Aimed diamonds', namePt: 'Ouros mirados', dur: 240, mult: 4, target: 1, gp: 12,
+    update(A){ if(A.t % 9 === 1){ const near = Math.random() < .25; const [hx, hy] = heart();
+      riseDiamond(hx + (near ? rand(-10, 10) : rand(-100, 100)), hy + rand(140, 180), b => { b.vy = 1; b.gy = -.2; b.maxV = 8; }); } } },
+  { name: 'FINAL CHAOS', dur: 1500, mult: 0, target: 'chaos', gp: 15, form: 'knife', soulSpeed: 10, final: true,
+    init(A){ Object.assign(A.d, { amount: 0, made: 0, next: 60, gap: 16, lastK: 0, chase: 0, phase: 'rain', jt: 0 }); G.fast = true; Snd.play('byebye'); },
+    update: updateFinal },
+];
+
+function finalScythe(x){
+  B({ kind: 'scythe', x, y: -60, vy: 5, gy: 1, hw: 24, hh: 30, keep: true, noCull: true, big: 2, draw: drawKnife, upd: b => {
+    b.rot += 14*D2R; b.ang = b.rot;
+    if(b.y >= 380){ b.dead = true; laser(b.x); }
+  }, onGraze: () => { G.atk.d.made += .2; } });
+  Snd.play('spin');
+}
+function laser(x){
+  B({ kind: 'laser', x, y: 240, hw: 1.5, hh: 400, keep: true, noCull: true, xs: 1, grow: true, harm: false, tpt: 0, draw: drawLaser, upd: b => {
+    if(b.grow){ b.xs += 8; if(b.xs >= 32){ b.xs = 32; b.grow = false; } }
+    else b.xs -= 4;
+    b.hw = 1.5 * b.xs; b.harm = b.xs >= 16;
+    if(b.xs <= 0) b.dead = true;
+  }, onGraze: () => { G.atk.d.made += .2; } });
+  Snd.play('laser'); G.shake = 3;
+}
+function updateFinal(A){
+  const d = A.d, S = G.soul;
+  if(A.t <= 10){ G.dark = A.t/10 * .85; G.box.alpha = 1 - A.t/10; S.y = BOX.cy + 160*A.t/10; }
+  if(A.t === 10){ G.box.gone = true; S.minX = 8; S.maxX = W - 8; S.minY = 8; S.maxY = 452; }
+  if(d.phase === 'rain'){
+    if(A.t === 20) finalScythe(40);
+    if(A.t === 40) finalScythe(570);
+    if(A.t >= 60 && A.t === d.next){
+      d.amount++;
+      let k;
+      // a cada 3 foices (chase == 3) a próxima cai na coluna do coração
+      k = irand(0, 4); if(k === d.lastK) k = irand(0, 4);
+      if(d.chase === 3){ k = Math.floor(S.x/90); d.chase = 0; }
+      d.lastK = k; d.chase++;
+      finalScythe(40 + 90*k);
+      if(k === 1) finalScythe(490);
+      if(k === 0) finalScythe(580);
+      d.next = A.t + d.gap; d.gap = Math.max(7, d.gap - 1);
+      // special 2 começa na hora, com as últimas foices ainda caindo
+      if(d.amount >= 29 - d.made){ d.phase = 'end'; G.jevil.form = 'center'; }
+    }
+  } else if(d.phase === 'wait'){
+    d.waitT++;
+    if(d.waitT > 45 && !G.bullets.length){ d.phase = 'end'; G.jevil.form = 'center'; Snd.play('laugh'); }
+  } else if(d.phase === 'end'){
+    d.jt++;
+    const L = { 40: [40, 580], 98: [40, 580, 310], 46: [130, 490], 86: [130, 490], 52: [220, 400], 80: [220, 400], 66: [310] };
+    if(d.jt === 10) Snd.play('neochaos');
+    if(L[d.jt]) L[d.jt].forEach(x => finalScythe(x));
+    if(d.jt === 130){ G.white = -.3; B({ kind: 'giant', x: 320, y: -320, vy: 1, gy: .02, harm: false, noCull: true, draw: drawGiant }); Snd.play('spin'); }
+    if(d.jt > 130){
+      G.white += .01; G.shake = 2;
+      if(G.white >= 1) G.bullets = G.bullets.filter(b => b.kind !== 'giant');
+      if(G.white >= 1.3){ S.x = 320; S.y = 120; d.phase = 'fadeout'; }
+    }
+  } else if(d.phase === 'fadeout'){
+    G.white -= .08; G.dark = Math.max(0, G.dark - .08);
+    if(G.white <= 0){ G.white = 0; A.over = true; G.fast = false; }
+  }
+}
+
+/* ------------------------- Desenho das balas -------------------------- */
+function drawHorse(b){
+  ctx.save(); ctx.translate(b.x, b.y);
+  if(!b.front) ctx.globalAlpha *= .35;
+  ctx.fillStyle = '#f8d048'; ctx.fillRect(-1, -26, 3, 52);
+  ctx.fillStyle = b.front ? '#fff' : '#6a5a8a'; ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(2, 2, 14, 7, 0, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-8, -2); ctx.lineTo(-13, -13); ctx.lineTo(-6, -16); ctx.lineTo(-1, -4); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(-13, -13, 6, 4, -.4, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#d02848'; ctx.fillRect(-4, -3, 10, 3);
+  ctx.strokeStyle = b.front ? '#fff' : '#6a5a8a'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-7, 7); ctx.lineTo(-10, 14); ctx.moveTo(10, 7); ctx.lineTo(13, 14); ctx.stroke();
+  ctx.restore();
+}
+function drawBomb(b){
+  ctx.save(); ctx.translate(b.x, b.y);
+  const fl = b.vy === 0 && b.t % 2 === 0;
+  ctx.fillStyle = fl ? '#fff' : '#2a2238'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, 0, 11, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#f8d048'; ctx.fillRect(-3, -16, 6, 5);
+  ctx.fillStyle = '#ff7020'; ctx.beginPath(); ctx.arc(3, -19, 2 + Math.random()*2, 0, TAU); ctx.fill();
+  ctx.restore();
+  drawSuit(b.btype, b.x, b.y, 5, 0, 1, fl ? '#000' : '#fff');
+}
+function drawKnife(b){
+  const k = b.big || 1;
+  ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.rot); ctx.scale(k, k);
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 2/k;
+  ctx.fillStyle = '#7a52c8'; ctx.fillRect(-3, -14, 6, 28); ctx.strokeRect(-3, -14, 6, 28);
+  ctx.fillStyle = '#f2eef8';
+  for(const s of [-1, 1]){
+    ctx.beginPath(); ctx.moveTo(0, s*13); ctx.quadraticCurveTo(-s*6, s*22, -s*16, s*14); ctx.quadraticCurveTo(-s*8, s*14, -s*2, s*6); ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  ctx.fillStyle = '#f8d048'; ctx.beginPath(); ctx.arc(0, 0, 4, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+function drawDarkClub(b){ drawSuit('club', b.x, b.y, 22, 0, 1, '#2a1a40'); ctx.save(); ctx.globalAlpha *= .6; ctx.strokeStyle = '#a070ff'; ctx.lineWidth = 2; suitPath(ctx, 'club', 22); ctx.restore(); }
+function drawLaser(b){
+  const w = 3 * b.xs;
+  ctx.fillStyle = b.harm ? '#fff' : 'rgba(255,255,255,.5)';
+  ctx.fillRect(b.x - w/2, 0, w, H);
+  ctx.fillStyle = 'rgba(160,112,255,.5)'; ctx.fillRect(b.x - w/2 - 4, 0, 4, H); ctx.fillRect(b.x + w/2, 0, 4, H);
+}
+function drawGiant(b){
+  ctx.save(); ctx.translate(b.x + rand(-3, 3), b.y + rand(-3, 3)); ctx.scale(16, 16);
+  ctx.fillStyle = '#7a52c8'; ctx.fillRect(-3, -14, 6, 28);
+  ctx.fillStyle = '#f2eef8';
+  for(const s of [-1, 1]){ ctx.beginPath(); ctx.moveTo(0, s*13); ctx.quadraticCurveTo(-s*6, s*22, -s*16, s*14); ctx.quadraticCurveTo(-s*8, s*14, -s*2, s*6); ctx.closePath(); ctx.fill(); }
+  ctx.restore();
+}
+
+/* ------------------------- Atualização da caixa ------------------------ */
+function updateBox(){
+  const X = G.box, A = G.atk, S = G.soul;
+  if(!X.closing){ X.open = Math.min(1, X.open + 1/15); }
+  else {
+    X.open = Math.max(0, X.open - 1/15);
+    if(X.open <= 0){ if(G.loseAfter){ G.loseAfter = false; return gameOver(); } return finishEnemyTurn(); }
+  }
+  if(S.enter < 1) S.enter = Math.min(1, S.enter + 1/8);
+  // o obj_dbulletcontroller nasce junto com a caixa (btimer = 99): o ataque roda enquanto ela cresce
+  // rtimer == 12: o ataque (event_user 5) só nasce 12 quadros depois da caixa
+  X.age = (X.age || 0) + 1;
+  if(!X.closing && X.age > 12){
+    if(A.needInit){ A.needInit = false; A.def.init && A.def.init(A); }
+    A.t++; A.timer--;
+    A.def.update(A);
+    const sp = held.x ? (A.def.final ? 5 : CFG.soulSlow) : S.speed;
+    const mx = (held.right ? 1 : 0) - (held.left ? 1 : 0), my = (held.down ? 1 : 0) - (held.up ? 1 : 0);
+    if(S.enter >= 1 && !(A.def.final && A.t <= 10)){
+      S.x = clamp(S.x + mx*sp, S.minX, S.maxX);
+      S.y = clamp(S.y + my*sp, S.minY, S.maxY);
+    }
+    updateBullets();
+    // turntimer 0: obj_battlecontroller destrói todas as balas na hora
+    if(A.def.final ? A.over : A.timer <= 0){ X.closing = true; G.bullets = []; }
+  }
+  if(S.iframe > 0) S.iframe--;
+  if(S.graze > 0) S.graze--;
+}
+
+/* ------------------------------ Desenho ------------------------------- */
+function drawBG(){
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  const t = G.t, J = G.jevil;
+  const spin = J ? 1 + 1.5 * (1 - J.hp / J.max) : 1;
+  G.bgPhase = (G.bgPhase || 0) + spin;
+  const ph = G.bgPhase;
+  ctx.lineWidth = 2;
+  for(let layer = 0; layer < 2; layer++){
+    const sz = layer ? 50 : 100, off = (ph * (layer ? .5 : .25)) % sz;
+    ctx.strokeStyle = layer ? 'rgba(90,40,130,.35)' : 'rgba(60,30,100,.3)';
+    ctx.beginPath();
+    for(let x = -sz; x < W + sz; x += sz){ ctx.moveTo(x + off, 0); ctx.lineTo(x + off, 326); }
+    for(let y = -sz; y < 326 + sz; y += sz){ if(y + off < 326){ ctx.moveTo(0, y + off); ctx.lineTo(W, y + off); } }
+    ctx.stroke();
+  }
+  // luzes do carrossel girando
+  const n = 18;
+  for(let i = 0; i < n; i++){
+    const a = i/n*TAU + ph*.012, z = Math.sin(a);
+    const x = 320 + Math.cos(a)*300, y = 40 + z*22, r = 3 + (z+1)*2.5;
+    ctx.globalAlpha = .2 + (z+1)*.28;
+    ctx.fillStyle = i % 3 === 0 ? '#f8d048' : i % 3 === 1 ? '#a070ff' : '#ff4090';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawJevil(){
+  const J = G.jevil, A = G.atk;
+  J.anim++;
+  const f = J.hp / J.max;
+  const tiredPose = G.tired || G.jturnNow === 17 && G.scene !== 'menu';
+  const speed = .12 + (1 - f) * .15;
+  let bob = Math.sin(J.anim * speed) * 6, sway = Math.sin(J.anim * .06) * (f <= .8 ? .18 : .08);
+  if(tiredPose){ bob = Math.sin(J.anim*.04)*2; sway = .12; }
+  if(J.swing > 0){ sway += Math.sin(J.anim*.5) * J.swing/300; J.swing *= .93; if(J.swing < 1) J.swing = 0; }
+  let x = J.x, y = J.y + bob;
+  if(J.hurtT > 0){ J.hurtT--; x += (J.hurtT % 2 ? 1 : -1) * J.hurtT * .6; }
+  // Some nos ataques de teleporte e bombas, volta no fim do turno
+  if(G.scene === 'bullets' && A && A.def.hide && A.timer > 10) return;
+  if(J.form === 'knife' && G.scene === 'bullets'){ drawKnife({ x: x + 32, y: y + 40, rot: J.anim*.4, big: 2 }); return; }
+  if(J.form === 'center'){ x = 320 - SPR.jevil.width/2; y = 100 - SPR.jevil.height/2 + bob; }
+  if(G.scene === 'win' && G.winType === 'spare') ctx.globalAlpha = .7;
+  if(f < .4 && !tiredPose){
+    ctx.globalAlpha = .18;
+    for(let i = 0; i < 7; i++){ const a = J.anim*.05 + i/7*TAU; ctx.drawImage(SPR.jevil, x + Math.cos(a)*40, y + Math.sin(a)*14); }
+    ctx.globalAlpha = 1;
+  }
+  ctx.save(); ctx.translate(x + SPR.jevil.width/2, y + SPR.jevil.height);
+  ctx.rotate(sway); if(tiredPose) ctx.scale(1, .94);
+  ctx.translate(-SPR.jevil.width/2, -SPR.jevil.height);
+  ctx.drawImage(J.hurtT > 12 ? SPR.jevilW : SPR.jevil, 0, 0);
+  ctx.restore(); ctx.globalAlpha = 1;
+  if(G.tired && G.scene !== 'win') text('Z', x + 70 + Math.sin(G.t*.1)*4, y - 6 - (G.t % 40)/2, '#8080ff', 12);
+}
+
+function drawParty(){
+  G.party.forEach((p, i) => {
+    const s = SPR[p.id];
+    let x = p.x, y = p.y + Math.sin(G.t*.08 + i)*1.5;
+    if(p.flash > 0){ p.flash--; x += (p.flash % 2 ? 2 : -2); }
+    ctx.save();
+    if(p.down){
+      ctx.globalAlpha = .7;
+      ctx.translate(x + s.width/2, y + s.height); ctx.rotate(-Math.PI/2 * .9); ctx.translate(-s.width/2, -s.height);
+      ctx.filter = 'grayscale(.6) brightness(.7)';
+      ctx.drawImage(s, 0, 0);
+    } else if(p.spin > 0){
+      p.spin--; ctx.translate(x + s.width/2, y); ctx.scale(Math.cos(p.spin*.5), 1); ctx.translate(-s.width/2, 0); ctx.drawImage(s, 0, 0);
+    } else ctx.drawImage(p.flash > 6 ? SPR[p.id + 'W'] : s, x, y);
+    ctx.restore(); ctx.filter = 'none';
+    if(p.defend && G.scene !== 'menu'){
+      ctx.strokeStyle = p.col; ctx.lineWidth = 2; ctx.globalAlpha = .7;
+      ctx.beginPath(); ctx.arc(x + s.width/2 + 18, y + s.height/2, 14, -1, 1); ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    if(p.slash > 0){
+      p.slash--;
+      if(p.slash < 12){
+        const k = 1 - p.slash/12, J = G.jevil;
+        ctx.strokeStyle = p.col; ctx.lineWidth = 4 * (1-k) + 1;
+        ctx.beginPath(); ctx.moveTo(J.x + 10 + i*10, J.y + 10 + i*12); ctx.lineTo(J.x + 10 + i*10 + 60*k, J.y + 10 + i*12 + 60*k); ctx.stroke();
+      }
+    }
+  });
+}
+
+function drawTP(){
+  const x = 38, y = 40, h = 196, w = 22;
+  G.tpShow = lerp(G.tpShow, G.tp, .25);
+  const pct = Math.round(G.tp / CFG.tpMax * 100);
+  ctx.fillStyle = '#80000a'; ctx.fillRect(x, y, w, h);
+  const fh = h * (G.tpShow / CFG.tpMax);
+  ctx.fillStyle = pct >= 100 ? '#ffd000' : '#ffa040'; ctx.fillRect(x, y + h - fh, w, fh);
+  const M = G.menu;
+  if(G.scene === 'menu' && M && M.sub && (M.sub.kind === 'magic' || M.sub.kind === 'act')){
+    const list = M.sub.kind === 'act' ? ACTS : SPELLS[G.party[M.cur].id];
+    const it = list[M.sel];
+    if(it && it.tp){ const ch = Math.min(fh, h * (it.tp / CFG.tpMax)); ctx.globalAlpha = .5 + Math.sin(G.t*.3)*.3; ctx.fillStyle = '#fff'; ctx.fillRect(x, y + h - fh, w, ch); ctx.globalAlpha = 1; }
+  }
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(x, y, w, h);
+  text('T', x - 22, y + 50, '#fff', 16); text('P', x - 22, y + 72, '#fff', 16);
+  if(pct >= 100) text('MAX', x - 26, y + 104, '#ffd000', 12);
+  else { text(String(pct), x - 30, y + 104, '#fff', 12); text('%', x - 26, y + 122, '#fff', 12); }
+}
+
+const ICON = {
+  FIGHT(g){ g.beginPath(); g.moveTo(-8, 8); g.lineTo(8, -8); g.moveTo(-8, 2); g.lineTo(-2, 8); g.stroke(); },
+  ACT(g){ g.beginPath(); g.arc(0, -1, 7, 0, TAU); g.moveTo(-3, 5); g.lineTo(-6, 9); g.stroke(); },
+  MAGIC(g){ g.beginPath(); for(let i = 0; i < 5; i++){ const a = -Math.PI/2 + i*TAU*2/5; g.lineTo(Math.cos(a)*8, Math.sin(a)*8); } g.closePath(); g.stroke(); },
+  ITEM(g){ g.strokeRect(-7, -4, 14, 12); g.beginPath(); g.moveTo(-3, -4); g.lineTo(-3, -8); g.lineTo(3, -8); g.lineTo(3, -4); g.stroke(); },
+  SPARE(g){ g.beginPath(); g.moveTo(-7, -7); g.lineTo(7, 7); g.moveTo(7, -7); g.lineTo(-7, 7); g.stroke(); },
+  DEFEND(g){ g.beginPath(); g.moveTo(0, -8); g.lineTo(7, -5); g.lineTo(6, 3); g.lineTo(0, 8); g.lineTo(-6, 3); g.lineTo(-7, -5); g.closePath(); g.stroke(); },
+};
+
+function drawHUD(){
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 326, W, 154);
+  ctx.fillStyle = '#332033'; ctx.fillRect(0, 326, W, 2);
+  const M = G.menu;
+  G.party.forEach((p, i) => {
+    const px = i*213, active = G.scene === 'menu' && M && M.cur === i;
+    const py = active ? 294 : 326;
+    ctx.fillStyle = '#000'; ctx.fillRect(px, py, 213, active ? 72 : 40);
+    if(active){ ctx.strokeStyle = p.col; ctx.lineWidth = 2; ctx.strokeRect(px + 1, py + 1, 211, 70); }
+    ctx.fillStyle = p.down ? '#ff0000' : p.col; ctx.fillRect(px + 10, py + 10, 14, 14);
+    if(p.act){ ctx.fillStyle = '#000'; ctx.fillRect(px + 13, py + 13, 8, 8); }
+    text(p.name, px + 32, py + 10, '#fff', 12);
+    text('HP', px + 112, py + 6, '#fff', 8);
+    ctx.fillStyle = '#800000'; ctx.fillRect(px + 130, py + 6, 76, 9);
+    ctx.fillStyle = p.down ? '#ff0000' : p.col; ctx.fillRect(px + 130, py + 6, 76 * clamp(p.hp/p.max, 0, 1), 9);
+    text(p.hp + ' / ' + p.max, px + 206, py + 20, p.down ? '#ff0000' : p.hp <= p.max/4 ? '#ffff00' : '#fff', 8, 'right');
+    if(active){
+      BTN[p.id].forEach((b, k) => {
+        const bx = px + 22 + k*36, by = py + 42, sel = !M.sub && M.btn === k;
+        ctx.save(); ctx.translate(bx + 12, by + 12);
+        ctx.strokeStyle = sel ? '#ffff00' : '#ff8020'; ctx.lineWidth = 2;
+        ctx.strokeRect(-14, -12, 28, 24); ICON[b](ctx);
+        ctx.restore();
+      });
+    }
+  });
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 368, W, 112);
+  ctx.fillStyle = '#332033'; ctx.fillRect(0, 366, W, 2);
+}
+
+function drawMenuText(){
+  const M = G.menu; if(!M) return;
+  const P = G.party[M.cur];
+  if(!M.sub){
+    wrap(G.flavor.slice(0, G.flavorN), 33).forEach((l, i) => text(l, 30, 384 + i*30));
+    return;
+  }
+  const s = M.sub;
+  const heartAt = (x, y) => ctx.drawImage(SPR.soul, x, y);
+  if(s.kind === 'enemy'){
+    heartAt(40, 388);
+    text('Jevil', 70, 386, G.tired ? '#00b2ff' : '#fff', 16);
+    if(G.tired) text('(Tired)', 70, 410, '#00b2ff', 10);
+    text('HP', 400, 376, '#fff', 8);
+    ctx.fillStyle = '#800000'; ctx.fillRect(400, 388, 80, 16);
+    ctx.fillStyle = '#00ff00'; ctx.fillRect(400, 388, 80 * G.jevil.hp/G.jevil.max, 16);
+    text(Math.ceil(G.jevil.hp/G.jevil.max*100) + '%', 440, 392, '#000', 8, 'center');
+    text('MERCY', 500, 376, '#fff', 8);
+    ctx.fillStyle = '#ff5000'; ctx.fillRect(500, 388, 80, 16);
+    text('0%', 540, 392, '#800000', 8, 'center');
+  } else if(s.kind === 'act' || s.kind === 'item' || s.kind === 'magic'){
+    const list = s.kind === 'act' ? ACTS.map(a => ({ ...a, cant: !actUsable(a) }))
+      : s.kind === 'item' ? G.items.map(n => ({ name: n, desc: '' }))
+      : SPELLS[P.id].map(sp => ({ ...sp, cant: sp.tp > G.tp }));
+    list.forEach((it, i) => {
+      const x = 70 + (i % 2)*240, y = 386 + Math.floor(i/2)*30;
+      let nx = x;
+      if(it.helpers){ it.helpers.forEach((h, k) => { ctx.fillStyle = G.party[h].col; ctx.fillRect(x + k*14, y + 2, 10, 10); }); nx += 30; }
+      text(it.name, nx, y, it.cant ? '#808080' : '#fff', 14);
+      if(i === M.sel) heartAt(x - 28, y);
+    });
+    const cur = list[M.sel];
+    if(cur){
+      if(cur.desc) text(cur.desc, 610, 386, '#808080', 8, 'right');
+      if(cur.tp) text(Math.round(cur.tp/CFG.tpMax*100) + '% TP', 610, 404, '#ffa040', 8, 'right');
+    }
+  } else if(s.kind === 'party'){
+    G.party.forEach((p, i) => {
+      const x = 70 + i*190, y = 386;
+      text(cap(p.name), x, y, p.col, 14);
+      if(i === M.sel) heartAt(x - 28, y);
+    });
+    text(s.purpose === 'ITEM' ? s.item : s.spell.name, 70, 430, '#808080', 10);
+  }
+}
+
+function drawBox(){
+  const X = G.box; if(!X || X.gone) return;
+  const e = X.open;
+  ctx.save(); ctx.globalAlpha = X.alpha;
+  ctx.translate(BOX.cx, BOX.cy); ctx.rotate(Math.PI * (1 - e));
+  const w = BOX.w * e, h = BOX.h * e;
+  ctx.fillStyle = '#000'; ctx.fillRect(-w/2, -h/2, w, h);
+  ctx.strokeStyle = '#00c000'; ctx.lineWidth = 4; ctx.strokeRect(-w/2 + 2, -h/2 + 2, w - 4, h - 4);
+  ctx.restore();
+}
+function drawField(){
+  const X = G.box, S = G.soul; if(!X) return;
+  if(G.dark > 0){ ctx.fillStyle = `rgba(0,0,0,${G.dark})`; ctx.fillRect(0, 0, W, H); }
+  drawBullets();
+  if(X.closing && X.open < .5) return;
+  const sx = S.enter < 1 ? lerp(S.sx, S.x, S.enter) : S.x, sy = S.enter < 1 ? lerp(S.sy, S.y, S.enter) : S.y;
+  if(S.graze > 0){ ctx.globalAlpha = S.graze/8 * .8; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(sx - 11, sy - 11, 22, 22); ctx.globalAlpha = 1; }
+  if(S.iframe > 0 && Math.floor(S.iframe/2) % 2 === 0) ctx.globalAlpha = .4;
+  ctx.drawImage(SPR.soul, Math.round(sx - 8), Math.round(sy - 8));
+  ctx.globalAlpha = 1;
+  if(G.white > 0){ ctx.fillStyle = `rgba(255,255,255,${Math.min(1, G.white)})`; ctx.fillRect(0, 0, W, H); }
+}
+
+function drawFX(){
+  G.fx = G.fx.filter(f => {
+    f.t++;
+    if(f.kind === 'boom'){
+      ctx.globalAlpha = Math.max(0, .7 - f.t/10); ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(f.x, f.y, 6 + f.t*2, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+      return f.t < 12;
+    }
+    if(f.kind === 'hypno'){
+      ctx.strokeStyle = '#c080ff'; ctx.lineWidth = 2; ctx.globalAlpha = Math.max(0, 1 - f.t/50);
+      for(let k = 0; k < 3; k++){ ctx.beginPath(); ctx.arc(f.x, f.y, (f.t*2 + k*14) % 60, 0, TAU); ctx.stroke(); }
+      ctx.globalAlpha = 1; return f.t < 50;
+    }
+    if(f.kind === 'bird'){
+      const x = -20 + f.t*12, y = 90 + Math.sin(f.t*.5)*6;
+      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x - 10, y - 6 + (f.t % 6 < 3 ? 0 : 8)); ctx.lineTo(x - 6, y); ctx.lineTo(x - 10, y + 2); ctx.closePath(); ctx.fill();
+      return x < W + 20;
+    }
+    if(f.kind === 'buster'){
+      const k = Math.min(1, f.t/12), J = G.jevil, x = lerp(f.x0, J.x + 30, k), y = lerp(f.y0, J.y + 40, k);
+      ctx.fillStyle = '#ff60ff'; ctx.globalAlpha = 1 - Math.max(0, (f.t - 12)/8);
+      ctx.beginPath(); ctx.ellipse(x, y, 22, 10, -.3, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
+      return f.t < 20;
+    }
+    return false;
+  });
+  G.nums = G.nums.filter(n => {
+    n.t++;
+    if(n.t < 0) return true;
+    const k = n.t, y = n.y - (k < 10 ? Math.sin(k/10*Math.PI)*20 : 0);
+    ctx.globalAlpha = k > 30 ? Math.max(0, 1 - (k-30)/12) : 1;
+    ctx.font = '16px ' + FONT; ctx.textAlign = 'center';
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 4; ctx.strokeText(n.txt, n.x + 30, y);
+    text(n.txt, n.x + 30, y, n.col, 16, 'center');
+    ctx.globalAlpha = 1;
+    return k < 42;
+  });
+}
+
+/* --------------------------- Fim de jogo ------------------------------ */
+function victory(type){
+  G.scene = 'win'; G.winType = type; G.fast = false; G.ended = true;
+  G.box = null; G.bullets = [];
+  Snd.stopMusic(); Snd.play('win');
+  const lines = type === 'spare'
+    ? ['* JEVIL dozed off, worn out from all the fun.', '* "...WHAT FUN, WHAT FUN. I\'M SLEEPY, SLEEPY..."', '* You got the JEVILSTAIL!']
+    : ['* "THIS BODY CANNOT BE KILLED!"', '* "...BUT I\'M BORED NOW, BORED. YOU WIN, WIN."', '* You got the DEVILSKNIFE!'];
+  showMsg(lines.concat(['' + L('* YOU WON! Z to return to the title.', '* VOCÊ VENCEU! Z para voltar ao título.') + '']), () => { G.scene = 'title'; G.ended = false; });
+}
+// scr_gameover + obj_gameover_init: tela congelada 30 passos, coração no lugar (30), racha (50, snd_break1),
+// estilhaça em 6 pedaços (90, snd_break2), escurece (140) e vai para a tela de GAME OVER (150)
+function gameOver(){
+  const shot = document.createElement('canvas'); shot.width = W; shot.height = H; shot.getContext('2d').drawImage(cv, 0, 0);
+  const S = G.soul;
+  G.lose = { shot, x: (S ? S.x : 320) - 8 + 2, y: (S ? S.y : 240) - 8 + 2, shards: [] };
+  G.scene = 'lose'; G.loseT = 0; G.box = null; G.bullets = []; G.fast = false;
+  Snd.stopMusic(); Snd.play('hurt');
+}
+function updateLose(){
+  const Lo = G.lose; G.loseT++;
+  if(G.loseT === 50) Snd.play('break1');
+  if(G.loseT === 90){
+    Snd.play('break2');
+    for(const [dx, dy] of [[-2, 0], [0, 3], [2, 6], [8, 0], [10, 3], [12, 6]]){
+      const a = Math.random()*TAU; Lo.shards.push({ x: Lo.x + dx, y: Lo.y + dy, vx: Math.cos(a)*7, vy: -Math.sin(a)*7, f: 0 });
+    }
+  }
+  for(const q of Lo.shards){ q.vy += .2; q.x += q.vx; q.y += q.vy; q.f += .2; }
+  if(G.loseT > 210 && hit('z')) G.scene = 'title';
+}
+function drawHeartBreak(){
+  const Lo = G.lose, t = G.loseT;
+  if(t < 30){ ctx.drawImage(Lo.shot, 0, 0); return; }
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  if(t < 50) ctx.drawImage(SPR.soul, Lo.x, Lo.y);
+  else if(t < 90){ ctx.drawImage(SPR.soul, Lo.x, Lo.y); ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(Lo.x + 8, Lo.y); ctx.lineTo(Lo.x + 5, Lo.y + 6); ctx.lineTo(Lo.x + 10, Lo.y + 10); ctx.lineTo(Lo.x + 7, Lo.y + 16); ctx.stroke(); }
+  else { ctx.fillStyle = '#ff0000'; for(const q of Lo.shards) ctx.fillRect(q.x, q.y, 4, 4); }
+}
+
+/* ------------------------------ Título -------------------------------- */
+const TITLE_OPTS = () => [L('FIGHT', 'LUTAR'), L('PRACTICE ATTACK', 'TREINAR ATAQUE'), L('LANGUAGE: ENGLISH', 'IDIOMA: PORTUGUES')];
+function updateTitle(){
+  if(G.titleMode === 'practice'){
+    const n = ATTACKS.length;
+    if(hit('up')){ G.prSel = (G.prSel + n - 1) % n; Snd.play('move'); }
+    if(hit('down')){ G.prSel = (G.prSel + 1) % n; Snd.play('move'); }
+    if(hit('x')){ G.titleMode = null; Snd.play('back'); }
+    if(hit('z')){ Snd.play('select'); newGame(G.prSel); }
+    return;
+  }
+  if(hit('up')){ G.titleSel = (G.titleSel + 2) % 3; Snd.play('move'); }
+  if(hit('down')){ G.titleSel = (G.titleSel + 1) % 3; Snd.play('move'); }
+  if(G.titleSel === 2 && (hit('z') || hit('left') || hit('right'))){ Snd.play('select'); setLang(LANG === 'en' ? 'pt' : 'en'); return; }
+  if(hit('z')){
+    Snd.play('select');
+    if(G.titleSel === 0){ G.ended = false; newGame(); }
+    else G.titleMode = 'practice';
+  }
+}
+function drawTitle(){
+  drawBG();
+  ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0, 0, W, H);
+  if(G.titleMode === 'practice'){
+    text(L('PRACTICE ATTACK', 'TREINAR ATAQUE'), 320, 20, '#fff', 16, 'center');
+    if(G.practiceHits && G.lastPractice !== undefined) text(L('Last practice: ' + G.practiceHits + ' hit(s)', 'Último treino: ' + G.practiceHits + ' acerto(s)'), 320, 44, '#ff6060', 8, 'center');
+    ATTACKS.forEach((a, i) => {
+      const y = 70 + i*22;
+      text(String(i).padStart(2, ' ') + '  ' + L(a.name, a.namePt || a.name), 150, y, i === G.prSel ? '#ffff00' : '#c0c0c0', 10);
+      if(i === G.prSel) ctx.drawImage(SPR.soul, 122, y - 3);
+    });
+    text(L('Z practice · X back · hold X while dodging to move slowly', 'Z treina · X volta · segure X no desvio para ir devagar'), 320, 444, '#808080', 8, 'center');
+    return;
+  }
+  ctx.save(); ctx.translate(320, 160 + Math.sin(G.t*.08)*6); ctx.rotate(Math.sin(G.t*.05)*.1); ctx.scale(1.6, 1.6);
+  ctx.drawImage(SPR.jevil, -SPR.jevil.width/2, -SPR.jevil.height/2); ctx.restore();
+  text('JEVIL', 320, 24, '#f8d048', 32, 'center');
+  text('CHAOS, CHAOS!', 320, 66, '#a070ff', 12, 'center');
+  TITLE_OPTS().forEach((o, i) => {
+    const y = 330 + i*36;
+    text(o, 320, y, i === G.titleSel ? '#ffff00' : '#fff', 16, 'center');
+    if(i === G.titleSel) ctx.drawImage(SPR.soul, 320 - o.length*8 - 30, y);
+  });
+  text(L('Local build with the art and sound from your copy of the game.', 'Versão local com a arte e o som da sua cópia do jogo.'), 320, 440, '#605878', 8, 'center');
+  text(L('Z to confirm', 'Z para confirmar'), 320, 456, '#605878', 8, 'center');
+}
+function drawLose(){
+  if(G.loseT < 150){ drawHeartBreak(); if(G.loseT >= 140){ ctx.fillStyle = '#000'; ctx.globalAlpha = (G.loseT - 140)/10; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1; } return; }
+  const lt = G.loseT - 150;
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = Math.min(1, lt/40);
+  text('GAME OVER', 320, 160, '#fff', 32, 'center');
+  ctx.globalAlpha = 1;
+  if(lt > 50){
+    text(tx('"UEE HEE HEE! NOW YOU STAY, STAY!"'), 320, 240, '#a070ff', 10, 'center');
+    text(L('Z to return to the title', 'Z para voltar ao título'), 320, 300, '#808080', 10, 'center');
+  }
+}
+
+/* ------------------------------- Loop --------------------------------- */
+function update(){
+  G.t++;
+  if(hit('m')) Snd.toggleMusic();
+  if(hit('z')) for(const f of G.fx) if(f.kind === 'buster' && f.bolt && f.bolt.live && f.bolt.age >= 4 && !f.chosen) f.chosen = f.bolt.age;
+  Snd.tick();
+  if(G.shake > 0) G.shake--;
+  switch(G.scene){
+    case 'title': updateTitle(); break;
+    case 'intro': case 'etalk': updateBubble(); break;
+    case 'menu': updateMenu(); break;
+    case 'exec': updateMsg(); break;
+    case 'qte': updateQTE(); break;
+    case 'bullets': if(G.practice !== null && G.atk && G.atk.t === 1) G.practiceHits = 0, G.lastPractice = G.practice; updateBox(); break;
+    case 'win': updateMsg(); break;
+    case 'lose': updateLose(); break;
+  }
+  if(G.loseNow){ G.loseNow = false; gameOver(); }
+  for(const k in pressed) delete pressed[k];
+}
+function draw(){
+  ctx.save();
+  if(G.shake > 0) ctx.translate(rand(-G.shake, G.shake)/2, rand(-G.shake, G.shake)/2);
+  if(G.scene === 'title'){ drawTitle(); ctx.restore(); return; }
+  if(G.scene === 'lose'){ drawLose(); ctx.restore(); return; }
+  drawBG();
+  drawJevil();
+  drawParty();
+  drawTP();
+  if(G.scene === 'bullets') drawBox();
+  drawHUD();
+  if(G.scene === 'menu') drawMenuText();
+  if(G.scene === 'qte') drawQTE();
+  drawMsg();
+  if(G.scene === 'bullets') drawField();
+  drawBubble();
+  drawFX();
+  if(G.practice !== null && G.atk) text('TREINO ' + G.atk.idx + ': ' + G.atk.def.name + '   acertos: ' + G.practiceHits, 320, 8, '#a0a0a0', 8, 'center');
+  ctx.restore();
+}
+
+let last = performance.now(), acc = 0;
+const STEP = 1000/30;
+function frame(now){
+  acc += Math.min(250, now - last); last = now;
+  while(acc >= STEP){ update(); acc -= STEP; }
+  draw();
+  requestAnimationFrame(frame);
+}
+(document.fonts && document.fonts.load ? document.fonts.load('16px "Press Start 2P"').catch(() => {}) : Promise.resolve()).finally(() => {
+  cv.focus();
+  requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
+});
+window.__G = G; window.__ATTACKS = ATTACKS; window.__update = update; window.__draw = draw;
+{
+  const el = document.getElementById('volume'), out = document.getElementById('volv');
+  el.value = Math.round(VOL*100); out.textContent = el.value + '%';
+  el.addEventListener('input', () => { setVolume(el.value/100); out.textContent = el.value + '%'; });
+  // devolve o foco ao jogo para as setas não mexerem no volume
+  el.addEventListener('change', () => document.getElementById('cv').focus());
+}
+setLang(LANG);
+</script>
+<script src="assets/meta.js?v=20261029c"></script>
+<script src="local.js?v=20261029c"></script>
+</body>
+</html>
