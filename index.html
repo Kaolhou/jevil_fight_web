@@ -7,28 +7,23 @@
 <meta name="description" content="Play the Jevil secret boss fight from Deltarune Chapter 1 in the browser. A fan recreation with all 16 attacks, ACT and Hypnosis, Rude Buster, items, grazing and TP, built from the game's decompiled logic. English and Portuguese.">
 <meta name="keywords" content="Jevil, Deltarune, Deltarune Chapter 1, Jevil fight, Jevil boss, secret boss, Chaos Chaos, Kris, Susie, Ralsei, Toby Fox, Undertale, fan game, browser game, HTML5, bullet hell, boss fight simulator, practice Jevil">
 <meta name="author" content="Kaolhou">
-<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="robots" content="index, follow">
 <meta name="theme-color" content="#000000">
 <meta name="color-scheme" content="dark">
-<link rel="canonical" href="https://kaolhou.github.io/jevil_fight_web/">
-<link rel="alternate" hreflang="en" href="https://kaolhou.github.io/jevil_fight_web/">
-<link rel="alternate" hreflang="pt-BR" href="https://kaolhou.github.io/jevil_fight_web/?lang=pt">
-<link rel="alternate" hreflang="x-default" href="https://kaolhou.github.io/jevil_fight_web/">
+<link rel="canonical" href="https://jevil-fight-web.vercel.app/">
+<link rel="alternate" hreflang="en" href="https://jevil-fight-web.vercel.app/">
+<link rel="alternate" hreflang="pt-BR" href="https://jevil-fight-web.vercel.app/?lang=pt">
+<link rel="alternate" hreflang="x-default" href="https://jevil-fight-web.vercel.app/">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Jevil Fight Web">
 <meta property="og:title" content="Jevil Fight Web: Deltarune Chapter 1 boss fight in your browser">
 <meta property="og:description" content="Fight Jevil in the browser: all 16 attacks, ACT, Hypnosis, Rude Buster and TP from grazing, rebuilt from the game's code.">
-<meta property="og:url" content="https://kaolhou.github.io/jevil_fight_web/">
-<meta property="og:image" content="https://kaolhou.github.io/jevil_fight_web/og-image.png">
-<meta property="og:image:width" content="1200">
-<meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Kris, Susie and Ralsei facing Jevil on the spinning carousel">
+<meta property="og:url" content="https://jevil-fight-web.vercel.app/">
 <meta property="og:locale" content="en_US">
 <meta property="og:locale:alternate" content="pt_BR">
-<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:card" content="summary">
 <meta name="twitter:title" content="Jevil Fight Web: Deltarune Chapter 1 boss fight">
 <meta name="twitter:description" content="Fight Jevil in the browser: all 16 attacks, ACT, Hypnosis, Rude Buster and TP from grazing.">
-<meta name="twitter:image" content="https://kaolhou.github.io/jevil_fight_web/og-image.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill='%23f00' d='M2 1h4v1h1v1h2V2h1V1h4v1h1v5h-1v2h-1v1h-1v1h-1v1h-1v1H9v1H7v-1H6v-1H5v-1H4v-1H3V9H2V7H1V2h1z'/%3E%3C/svg%3E">
 <script type="application/ld+json">
 {
@@ -37,8 +32,7 @@
   "name": "Jevil Fight Web",
   "alternateName": "Deltarune Jevil fight (fan recreation)",
   "description": "A browser recreation of the Jevil secret boss fight from Deltarune Chapter 1, with all 16 attacks, ACT, Hypnosis, Rude Buster, items, grazing and TP.",
-  "url": "https://kaolhou.github.io/jevil_fight_web/",
-  "image": "https://kaolhou.github.io/jevil_fight_web/og-image.png",
+  "url": "https://jevil-fight-web.vercel.app/",
   "genre": ["Bullet hell", "RPG", "Boss fight"],
   "gamePlatform": "Web browser",
   "applicationCategory": "Game",
@@ -60,6 +54,7 @@
 
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
 <style>
 /* Layout: one black stage, the 640x480 battle canvas centered and scaled, touch pad below on phones */
@@ -305,7 +300,7 @@ const Snd = {
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0008, t+dur);
     s.connect(f); f.connect(g); g.connect(this.master); s.start(t); s.stop(t+dur+0.02);
   },
-  ALIAS: { pirouette: 'spin', hypnosis: 'bell', awkward: 'back', bird: 'tick', laser: 'bomb', crit: 'tp', item: 'heal', buster: 'slash', scythe: 'spin', voice: null },
+  ALIAS: { pirouette: 'spin', hypnosis: 'bell', awkward: 'back', bird: 'tick', laser: 'bomb', crit: 'tp', item: 'heal', buster: 'slash', scythe: 'spin', anything: 'laugh', voice: null },
   play(name, arg){
     if(this.hook && this.hook(name, arg)) return;
     if(name in this.ALIAS) name = this.ALIAS[name];
@@ -517,7 +512,7 @@ const G = {
 
 function newGame(practice){
   const J = CFG.jevil;
-  G.jevil = { hp: J.hp, max: J.hp, at: J.at, df: J.df, x: 500, y: 150, hurtT: 0, swing: 0, anim: 0, form: 'body' };
+  G.jevil = { hp: J.hp, max: J.hp, at: J.at, df: J.df, x: 500, y: 160, hurtT: 0, swing: 0, anim: 0, form: 'body' };
   G.party = CFG.party.map((p, i) => ({ ...p, max: p.hp, hp: p.hp, down: false, defend: false, flash: 0, x: 118 - i*14, y: 104 + i*64, act: null, slash: 0, spin: 0 }));
   G.items = CFG.items.slice();
   Object.assign(G, { tp: 0, tpShow: 0, tired: false, jturn: 0, turns: 0, hc: 0, chaosdance: 0, pfactor: 1, ifrNext: 1,
@@ -638,13 +633,15 @@ function updateMenu(){
         if(!actUsable(a)) return Snd.play('back');
         return commit({ type: 'ACT', act: a.name, tp: a.tp, helpers: a.helpers });
       }
-      if(s.kind === 'item'){ Snd.play('select'); return openSub('party', 'ITEM', s, { item: G.items[M.sel], idx: M.sel }); }
+      if(s.kind === 'item'){ Snd.play('select'); const item = G.items[M.sel]; return openSub('party', 'ITEM', s, { item, idx: M.sel, all: !!ITEMS[item].all }); }
       const sp = list[M.sel];
       if(sp.tp > G.tp) return Snd.play('back');
       Snd.play('select');
       return openSub(sp.target === 'enemy' ? 'enemy' : 'party', 'SPELL', s, { spell: sp });
     }
   } else if(s.kind === 'party'){
+    // item de equipe: o grupo todo fica selecionado e só confirma
+    if(s.all){ if(hit('z')){ const item = G.items.splice(s.idx, 1)[0]; return commit({ type: 'ITEM', item, target: M.cur, itemIdx: s.idx }); } return; }
     if(hit('left') || hit('up')){ M.sel = (M.sel + 2) % 3; Snd.play('move'); }
     if(hit('right') || hit('down')){ M.sel = (M.sel + 1) % 3; Snd.play('move'); }
     if(hit('z')){
@@ -726,7 +723,7 @@ function doAct(a, P){
     if(exhausted) G.tired = true;
     G.hc += 1;
     Snd.play('hypnosis');
-    G.fx.push({ kind: 'hypno', t: 0, x: J.x + 32, y: J.y + 40 });
+    G.fx.push({ kind: 'hypno', t: 0, x: J.x + 20, y: J.y + 20 }); // global.monsterx/y do Jevil = x+20, y+20
     const first = pick(['* Ralsei chanted something!', '* Susie spun something around!', '* Kris gazed strangely!']);
     return showMsg([first + '\n* JEVIL\'s next attack weakened!\n' + (exhausted ? '* JEVIL\'s looking exhausted!' : '* JEVIL became more TIRED!')], nextAction);
   }
@@ -791,9 +788,10 @@ function doSpell(a, P){
   }
   if(a.spell.name === 'Rude Buster'){
     const dmg = Math.max(1, Math.ceil(P.mag*5 + P.at*11 - J.df*3));
-    G.fx.push({ kind: 'buster', t: 0, x0: P.x + 40, y0: P.y + 20 });
-    Snd.play('buster');
-    setTimeout(() => { hurtJevil(dmg, P.col, 0); Snd.play('damage'); }, 400);
+    // obj_rudebuster_anim + obj_rudebuster_bolt: o dano entra quando o raio chega no Jevil
+    // Bônus (obj_rudebuster_bolt): apertar Z com o raio em voo, a partir do 4º passo, soma dano. No cap. 1 o código faz
+    // final_bolt = chosen_bolt, então qualquer aperto válido cai no caso chosen_bolt == final_bolt: +30 e snd_scytheburst.
+    G.fx.push({ kind: 'buster', t: 0, who: P, onHit: f => hurtJevil(dmg + (f.chosen ? 30 : 0), P.col, 0) });
     return showMsg(['* Susie cast RUDE BUSTER!'], nextAction);
   }
 }
@@ -806,52 +804,84 @@ function hurtJevil(dmg, col, i){
 
 /* ------------------------------ FIGHT --------------------------------- */
 const QTE_TARGET = 110;
+// obj_attackpress (modo de um botão, flag[13] = 0): uma barra por lutador, cada uma com um "bolt"
+// que anda 8 px por quadro até o alvo; Z acerta o bolt mais atrasado dentro da janela (-5, 15).
 function startQTE(fighters){
   G.scene = 'qte';
-  const offs = [0, 34, 68].sort(() => Math.random() - .5);
-  G.qte = { rows: fighters.map((a, i) => ({ who: a.who, x: 400 + offs[i], done: false, pts: 0, flash: 0 })), end: 0 };
+  const who = fighters.map(a => a.who).sort(() => Math.random() - .5);
+  const diff = 12, bolts = [];
+  let off = 0, last = -1;
+  who.forEach((w, i) => {
+    off += last;
+    bolts.push({ who: w, frame: 30 + off, alive: true });
+    if(i < who.length - 1 && last !== 0) last = pick([0, diff, diff*1.5]);
+    else last = pick([diff, diff*1.5]);
+  });
+  G.qte = { who: fighters.map(a => a.who), bolts, bx: 0, img: 0, pts: {}, done: {}, order: 0, post: 0, fade: 0,
+    press: { kris: 0, susie: 0, ralsei: 0 }, trail: [], bursts: [] };
+}
+function qteResolve(Q, w){
+  Q.done[w] = true;
+  const P = G.party[w], pts = Q.pts[w] || 0, i = Q.order++;
+  P.slash = 16;
+  if(pts <= 0){ G.nums.push({ x: G.jevil.x + 10, y: G.jevil.y + 20 - i*26, txt: 'MISS', col: '#c0c0c0', t: 0 }); return; }
+  const dmg = Math.max(0, Math.round(P.at * pts / 20 - G.jevil.df * 3));
+  addTP(Math.min(10, Math.round(pts / 15)));
+  Snd.play('slash');
+  hurtJevil(dmg, P.col, i); setTimeout(() => Snd.play('damage'), 120);
 }
 function updateQTE(){
   const Q = G.qte;
-  for(const r of Q.rows){ if(!r.done){ r.x -= 8; if(r.x < QTE_TARGET - 30){ r.done = true; r.pts = 0; } } else r.flash++; }
+  for(const b of Q.bolts) if(b.frame - Q.bx < -5) b.alive = false;
+  if(Q.img === 0) for(const b of Q.bolts) if(b.alive && b.frame - Q.bx >= 0) Q.trail.push({ who: b.who, d: b.frame - Q.bx, a: .4 });
+  for(const w of Q.who) if(!Q.done[w] && !Q.bolts.some(b => b.alive && b.who === w)) qteResolve(Q, w);
   if(hit('z')){
-    const live = Q.rows.filter(r => !r.done).sort((a, b) => a.x - b.x);
-    if(live.length){
-      const r = live[0], d = Math.abs(r.x - QTE_TARGET);
-      r.done = true; r.flash = 0;
-      r.pts = d <= 2 ? 150 : d <= 28 ? Math.round(120 - d*2) : Math.max(0, Math.round(80 - d));
-      if(r.pts >= 150) Snd.play('crit');
+    for(const k in Q.press) Q.press[k] = 5;
+    let top = 999, pick1 = null, dual = null;
+    for(const b of Q.bolts){
+      if(!b.alive) continue;
+      const c = b.frame - Q.bx;
+      if(c < 15 && c > -5){ if(c === top) dual = b; if(c < top){ top = c; pick1 = b; } }
+    }
+    for(const b of [pick1, dual]){
+      if(!b) continue;
+      const p = Math.abs(top), P = G.party[b.who];
+      const add = p === 0 ? 150 : p === 1 ? 120 : p === 2 ? 110 : 100 - p*2;
+      Q.pts[b.who] = (Q.pts[b.who] || 0) + add;
+      Q.bursts.push({ who: b.who, d: b.frame - Q.bx, t: 0, crit: p === 0 });
+      if(p === 0) Snd.play('crit');
+      b.alive = false;
     }
   }
-  if(Q.rows.every(r => r.done)){
-    Q.end++;
-    if(Q.end === 8){
-      let any = false;
-      Q.rows.forEach((r, i) => {
-        const P = G.party[r.who];
-        P.slash = 12 + i*4;
-        if(r.pts <= 0){ G.nums.push({ x: G.jevil.x + 10, y: G.jevil.y + 20 - i*26, txt: 'MISS', col: '#c0c0c0', t: -i*4 }); return; }
-        const dmg = Math.max(0, Math.round(P.at * r.pts / 20 - G.jevil.df * 3));
-        addTP(Math.min(10, Math.round(r.pts / 15)));
-        hurtJevil(dmg, P.col, i); any = true;
-      });
-      if(any){ Snd.play('slash'); setTimeout(() => Snd.play('damage'), 120); }
-    }
-    if(Q.end > 40){ G.qte = null; G.scene = 'exec'; nextAction(); }
+  Q.img = (Q.img + 1) % 2; Q.bx++;
+  for(const k in Q.press) Q.press[k]--;
+  if(Q.who.every(w => Q.done[w])){
+    Q.post++;
+    if(Q.post > 50) Q.fade += .08;
+    if(Q.fade > 1){ G.qte = null; G.scene = 'exec'; nextAction(); }
   }
 }
 function drawQTE(){
-  const Q = G.qte;
-  Q.rows.forEach((r, i) => {
-    const P = G.party[r.who], y = 374 + i*34;
-    ctx.strokeStyle = P.col; ctx.lineWidth = 2; ctx.strokeRect(QTE_TARGET - 50, y, 520, 30);
+  const Q = G.qte, row = w => 374 + w*34, bx = c => QTE_TARGET + c*8;
+  Q.who.forEach(w => {
+    const P = G.party[w], y = row(w), lit = Q.press[P.id] > 0;
+    ctx.strokeStyle = P.col; ctx.lineWidth = lit ? 3 : 2; ctx.strokeRect(QTE_TARGET - 50, y, 520, 30);
     ctx.fillStyle = P.col; ctx.globalAlpha = .3; ctx.fillRect(QTE_TARGET - 6, y + 2, 12, 26); ctx.globalAlpha = 1;
     text(P.name[0], QTE_TARGET - 80, y + 8, P.col, 16);
-    if(!r.done || r.flash < 10){
-      ctx.globalAlpha = r.done ? 1 - r.flash/10 : 1; ctx.fillStyle = r.done && r.pts >= 150 ? '#ffff00' : '#fff';
-      ctx.fillRect(r.x - 3, y + 2, 6, 26); ctx.globalAlpha = 1;
-    }
   });
+  Q.trail = Q.trail.filter(t => { t.a -= .04; if(t.a <= 0) return false; ctx.globalAlpha = t.a; ctx.fillStyle = '#fff'; ctx.fillRect(bx(t.d) - 3, row(t.who) + 2, 6, 26); ctx.globalAlpha = 1; return true; });
+  for(const b of Q.bolts){
+    if(!b.alive) continue;
+    const c = b.frame - Q.bx, x = bx(c); if(x > QTE_TARGET + 466) continue;
+    ctx.globalAlpha = c < 0 ? Math.max(0, 1 + c/3) : 1; ctx.fillStyle = '#fff'; ctx.fillRect(x - 3, row(b.who) + 2, 6, 26); ctx.globalAlpha = 1;
+  }
+  Q.bursts = Q.bursts.filter(u => {
+    u.t++; const a = 1 - u.t/12; if(a <= 0) return false;
+    const g = u.t*(u.crit ? 2 : 1);
+    ctx.globalAlpha = a; ctx.fillStyle = u.crit ? '#ffff00' : G.party[u.who].col; ctx.fillRect(bx(u.d) - 3 - g, row(u.who) + 2 - g, 6 + g*2, 26 + g*2); ctx.globalAlpha = 1;
+    return true;
+  });
+  if(Q.fade > 0){ ctx.globalAlpha = Math.min(1, Q.fade); ctx.fillStyle = '#000'; ctx.fillRect(0, 364, W, H - 364); ctx.globalAlpha = 1; }
 }
 
 /* ----------------------- Roteiro do Jevil (jturn) ---------------------- */
@@ -882,6 +912,7 @@ const SCRIPT = {
 const RANDOM_LINES = [['A CHAOS,\nCHAOS!', 'PLEASE, IT\'S\nJUST A\nSIMPLE\nCHAOS.'], ['I CAN DO\nANYTHING!!'], ['THIS BODY\nCANNOT BE\nKILLED!', 'THESE\nCURTAINS\nARE REALLY\nON FIRE!'], ['IT\'S ALL\nTOO MUCH\nFUN!!!']];
 
 function scriptTurn(){
+  G.turnId = (G.turnId || 0) + 1;
   const J = G.jevil, f = J.hp / J.max, hc = G.hc, T = G.turns;
   if(f <= .15 && G.jturn < 17) G.jturn = 17;
   if(G.jturn === 4 && (f <= .8 || (hc >= 2 && T >= 5 - hc))) G.jturn = 5;
@@ -920,7 +951,7 @@ function beginBullets(idx){
   G.bullets = []; G.dark = 0; G.white = 0;
   G.jevil.form = def.form || 'body';
   Snd.play('appear');
-  def.init && def.init(G.atk);
+  G.atk.needInit = true;
 }
 function finishEnemyTurn(){
   G.bullets = []; G.atk = null; G.box = null; G.dark = 0; G.white = 0;
@@ -1028,7 +1059,7 @@ function drawBullets(){
     const fa = b.fadeIn ? Math.min(1, b.t / b.fadeIn) : 1;
     ctx.globalAlpha = b.alpha * fa;
     if(b.draw) b.draw(b);
-    else if(b.kind === 'pellet'){ ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(b.x, b.y, 8, 0, TAU); ctx.fill(); ctx.stroke(); }
+    else if(b.kind === 'pellet'){ ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, TAU); ctx.fill(); ctx.stroke(); }
     else if(b.kind === 'vdiamond') drawSuit('diamond', b.x, b.y, 8, 0, 1, '#fff', .55);
     else if(b.kind === 'ldiamond') drawSuit('diamond', b.x, b.y, b.s, b.ang + Math.PI/2, 1, '#fff', .45);
     else drawSuit(b.kind, b.x, b.y, b.s, b.ang + Math.PI/2, 1, b.gray ? '#c0c0c0' : undefined);
@@ -1158,7 +1189,7 @@ const ATTACKS = [
   { name: 'Devilsknife', dur: 240, mult: 6, target: 1, gp: 3, form: 'knife',
     init(A){ knives(A, 1.4, true); Snd.play('laugh'); }, update(A){ A.d.step(); if(A.t % 20 === 0) Snd.play('spin'); } },
   { name: 'Carousel', namePt: 'Carrossel', dur: 240, mult: 5, target: 1, gp: 2,
-    init(A){ carousel(A, 7, j => 18*j, 1.15, j => 9*j, () => 1); } , update(){} },
+    init(A){ Snd.play('anything'); carousel(A, 7, j => 18*j, 1.15, j => 9*j, () => 1); } , update(){} },
   { name: 'Club bombs', namePt: 'Bombas de paus', dur: 300, mult: 4, target: 3, gp: 3, hide: true,
     update(A){ if(A.t % 12 === 1) bomb('club'); } },
   { name: 'Rising diamonds', namePt: 'Ouros subindo', dur: 240, mult: 5, target: 1, gp: 5,
@@ -1166,7 +1197,7 @@ const ATTACKS = [
   { name: 'Spiral ring', namePt: 'Anel em espiral', dur: 240, mult: 5, target: 1, gp: 2, soulSpeed: 5,
     update(A){ if(A.t % 54 === 1) ring(A, .45, pick([-1, 1])); } },
   { name: 'Alternating carousel', namePt: 'Carrossel alternado', dur: 240, mult: 5, target: 1, gp: 3,
-    init(A){ const v = rand(0, 63); carousel(A, 6, j => 21*j, 1.1, () => v, j => j % 2 ? -1 : 1); }, update(){} },
+    init(A){ Snd.play('anything'); const v = rand(0, 63); carousel(A, 6, j => 21*j, 1.1, () => v, j => j % 2 ? -1 : 1); }, update(){} },
   { name: 'Spade bombs', namePt: 'Bombas de espadas', dur: 270, mult: 4, target: 3, gp: 4, hide: true,
     update(A){ if(A.t % 12 === 1) bomb('spade'); } },
   { name: 'Dark clubs', namePt: 'Paus escuros', dur: 240, mult: 5, target: 1, gp: 1,
@@ -1341,7 +1372,10 @@ function updateBox(){
   }
   if(S.enter < 1) S.enter = Math.min(1, S.enter + 1/8);
   // o obj_dbulletcontroller nasce junto com a caixa (btimer = 99): o ataque roda enquanto ela cresce
-  if(!X.closing){
+  // rtimer == 12: o ataque (event_user 5) só nasce 12 quadros depois da caixa
+  X.age = (X.age || 0) + 1;
+  if(!X.closing && X.age > 12){
+    if(A.needInit){ A.needInit = false; A.def.init && A.def.init(A); }
     A.t++; A.timer--;
     A.def.update(A);
     const sp = held.x ? (A.def.final ? 5 : CFG.soulSlow) : S.speed;
@@ -1553,7 +1587,7 @@ function drawMenuText(){
     G.party.forEach((p, i) => {
       const x = 70 + i*190, y = 386;
       text(cap(p.name), x, y, p.col, 14);
-      if(i === M.sel) heartAt(x - 28, y);
+      if(s.all || i === M.sel) heartAt(x - 28, y);
     });
     text(s.purpose === 'ITEM' ? s.item : s.spell.name, 70, 430, '#808080', 10);
   }
@@ -1601,10 +1635,23 @@ function drawFX(){
       return x < W + 20;
     }
     if(f.kind === 'buster'){
-      const k = Math.min(1, f.t/12), J = G.jevil, x = lerp(f.x0, J.x + 30, k), y = lerp(f.y0, J.y + 40, k);
-      ctx.fillStyle = '#ff60ff'; ctx.globalAlpha = 1 - Math.max(0, (f.t - 12)/8);
-      ctx.beginPath(); ctx.ellipse(x, y, 22, 10, -.3, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
-      return f.t < 20;
+      // obj_rudebuster_anim: o raio sai no passo 10, vira 1/4 do ângulo por passo e acelera 1.5
+      const P = f.who, J = G.jevil, tx = J.x + 40, ty = J.y + 40, D = Math.PI/180;
+      if(f.t === 10){ Snd.play('buster'); const x = P.x + 40, y = P.y + 30; f.bolt = { x, y, dir: Math.atan2(-(ty - y), tx - x)/D - 20, sp: 24, age: 0, live: true }; f.trail = []; }
+      const b = f.bolt;
+      if(b && b.live){
+        if(b.age >= 1){
+          b.dir += ((Math.atan2(-(ty - b.y), tx - b.x)/D - b.dir + 540) % 360 - 180)/4;
+          if(Math.hypot(tx - b.x, ty - b.y) <= 40){ b.live = false; f.boom = 0; f.onHit(f); Snd.play('damage'); if(f.chosen) Snd.play('crit'); }
+        }
+        if(b.live){ f.trail.push({ x: b.x, y: b.y, a: .8 }); b.x += Math.cos(b.dir*D)*b.sp; b.y -= Math.sin(b.dir*D)*b.sp; b.sp += 1.5; b.age++; }
+      }
+      ctx.fillStyle = '#ff60ff';
+      if(f.trail) f.trail = f.trail.filter(t => { t.a -= .1; if(t.a <= 0) return false; ctx.globalAlpha = t.a; ctx.beginPath(); ctx.arc(t.x, t.y, 8*t.a, 0, TAU); ctx.fill(); return true; });
+      if(b && b.live){ ctx.globalAlpha = 1; ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(-b.dir*D); ctx.beginPath(); ctx.ellipse(0, 0, 22, 10, 0, 0, TAU); ctx.fill(); ctx.restore(); }
+      if(f.boom !== undefined && f.boom < 12){ f.boom++; ctx.globalAlpha = 1 - f.boom/12; ctx.beginPath(); ctx.arc(tx, ty, 10 + f.boom*5, 0, TAU); ctx.fill(); }
+      ctx.globalAlpha = 1;
+      return f.t < 28 || (b && b.live) || (f.trail && f.trail.length) || (f.boom !== undefined && f.boom < 12);
     }
     return false;
   });
@@ -1724,6 +1771,7 @@ function drawLose(){
 function update(){
   G.t++;
   if(hit('m')) Snd.toggleMusic();
+  if(hit('z')) for(const f of G.fx) if(f.kind === 'buster' && f.bolt && f.bolt.live && f.bolt.age >= 4 && !f.chosen) f.chosen = f.bolt.age;
   Snd.tick();
   if(G.shake > 0) G.shake--;
   switch(G.scene){
@@ -1782,6 +1830,5 @@ window.__G = G; window.__ATTACKS = ATTACKS; window.__update = update; window.__d
 }
 setLang(LANG);
 </script>
-
 </body>
 </html>

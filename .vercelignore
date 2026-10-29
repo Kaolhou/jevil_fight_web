@@ -1,0 +1,3 @@
+# The local build needs the extracted game files; it is not deployed.
+local/
+README.md

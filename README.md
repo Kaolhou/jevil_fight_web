@@ -2,9 +2,7 @@
 
 **Play the Jevil secret boss fight from Deltarune Chapter 1 in your browser.**
 
-**Play it here:** https://kaolhou.github.io/jevil_fight_web/
-
-![Kris, Susie and Ralsei facing Jevil](og-image.png)
+**Play it here:** https://jevil-fight-web.vercel.app/
 
 A fan recreation of the Jevil fight ("CHAOS, CHAOS!") from Deltarune Chapter 1, written in plain HTML5 canvas and JavaScript with no build step and no dependencies. The rules and numbers come from the game's decompiled logic, not from guesses:
 
@@ -26,7 +24,7 @@ A fan recreation of the Jevil fight ("CHAOS, CHAOS!") from Deltarune Chapter 1, 
 
 ## Two builds
 
-- **`index.html`** (the hosted one) uses original pixel art drawn for this project, so it contains no files from the game. Open it directly or host the folder anywhere (GitHub Pages works as is).
+- **`index.html`** (the hosted one) uses original pixel art drawn for this project, so it contains no files from the game. Open it directly or host the folder anywhere. It is deployed on Vercel (`vercel.json` sets the cache headers, `.vercelignore` keeps `local/` out of the deploy).
 - **`local/`** is the same fight drawn with the sprites, sounds and music from **your own copy** of DELTARUNE. Those files are not in this repository. Extract them yourself:
 
   ```sh

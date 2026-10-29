@@ -3,4 +3,4 @@ Allow: /
 # local/ needs the extracted game files, which are not in this repository
 Disallow: /local/
 
-Sitemap: https://kaolhou.github.io/jevil_fight_web/sitemap.xml
+Sitemap: https://jevil-fight-web.vercel.app/sitemap.xml

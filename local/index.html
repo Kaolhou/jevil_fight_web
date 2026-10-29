@@ -256,7 +256,7 @@ const Snd = {
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0008, t+dur);
     s.connect(f); f.connect(g); g.connect(this.master); s.start(t); s.stop(t+dur+0.02);
   },
-  ALIAS: { pirouette: 'spin', hypnosis: 'bell', awkward: 'back', bird: 'tick', laser: 'bomb', crit: 'tp', item: 'heal', buster: 'slash', scythe: 'spin', voice: null },
+  ALIAS: { pirouette: 'spin', hypnosis: 'bell', awkward: 'back', bird: 'tick', laser: 'bomb', crit: 'tp', item: 'heal', buster: 'slash', scythe: 'spin', anything: 'laugh', voice: null },
   play(name, arg){
     if(this.hook && this.hook(name, arg)) return;
     if(name in this.ALIAS) name = this.ALIAS[name];
@@ -818,17 +818,26 @@ function updateQTE(){
   }
 }
 function drawQTE(){
-  const Q = G.qte;
-  Q.rows.forEach((r, i) => {
-    const P = G.party[r.who], y = 374 + i*34;
-    ctx.strokeStyle = P.col; ctx.lineWidth = 2; ctx.strokeRect(QTE_TARGET - 50, y, 520, 30);
+  const Q = G.qte, row = w => 374 + w*34, bx = c => QTE_TARGET + c*8;
+  Q.who.forEach(w => {
+    const P = G.party[w], y = row(w), lit = Q.press[P.id] > 0;
+    ctx.strokeStyle = P.col; ctx.lineWidth = lit ? 3 : 2; ctx.strokeRect(QTE_TARGET - 50, y, 520, 30);
     ctx.fillStyle = P.col; ctx.globalAlpha = .3; ctx.fillRect(QTE_TARGET - 6, y + 2, 12, 26); ctx.globalAlpha = 1;
     text(P.name[0], QTE_TARGET - 80, y + 8, P.col, 16);
-    if(!r.done || r.flash < 10){
-      ctx.globalAlpha = r.done ? 1 - r.flash/10 : 1; ctx.fillStyle = r.done && r.pts >= 150 ? '#ffff00' : '#fff';
-      ctx.fillRect(r.x - 3, y + 2, 6, 26); ctx.globalAlpha = 1;
-    }
   });
+  Q.trail = Q.trail.filter(t => { t.a -= .04; if(t.a <= 0) return false; ctx.globalAlpha = t.a; ctx.fillStyle = '#fff'; ctx.fillRect(bx(t.d) - 3, row(t.who) + 2, 6, 26); ctx.globalAlpha = 1; return true; });
+  for(const b of Q.bolts){
+    if(!b.alive) continue;
+    const c = b.frame - Q.bx, x = bx(c); if(x > QTE_TARGET + 466) continue;
+    ctx.globalAlpha = c < 0 ? Math.max(0, 1 + c/3) : 1; ctx.fillStyle = '#fff'; ctx.fillRect(x - 3, row(b.who) + 2, 6, 26); ctx.globalAlpha = 1;
+  }
+  Q.bursts = Q.bursts.filter(u => {
+    u.t++; const a = 1 - u.t/12; if(a <= 0) return false;
+    const g = u.t*(u.crit ? 2 : 1);
+    ctx.globalAlpha = a; ctx.fillStyle = u.crit ? '#ffff00' : G.party[u.who].col; ctx.fillRect(bx(u.d) - 3 - g, row(u.who) + 2 - g, 6 + g*2, 26 + g*2); ctx.globalAlpha = 1;
+    return true;
+  });
+  if(Q.fade > 0){ ctx.globalAlpha = Math.min(1, Q.fade); ctx.fillStyle = '#000'; ctx.fillRect(0, 364, W, H - 364); ctx.globalAlpha = 1; }
 }
 
 /* ----------------------- Roteiro do Jevil (jturn) ---------------------- */
@@ -1009,7 +1018,7 @@ function drawBullets(){
     else if(b.kind === 'pellet'){ ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(b.x, b.y, 3, 0, TAU); ctx.fill(); ctx.stroke(); }
     else if(b.kind === 'vdiamond') drawSuit('diamond', b.x, b.y, 8, 0, 1, '#fff', .55);
     else if(b.kind === 'ldiamond') drawSuit('diamond', b.x, b.y, b.s, b.ang + Math.PI/2, 1, '#fff', .45);
-    else drawSuit(b.kind, b.x, b.y, b.s, b.ang + Math.PI/2);
+    else drawSuit(b.kind, b.x, b.y, b.s, b.ang + Math.PI/2, 1, b.gray ? '#c0c0c0' : undefined);
     ctx.globalAlpha = 1;
   }
 }
@@ -1411,6 +1420,11 @@ function drawParty(){
       p.spin--; ctx.translate(x + s.width/2, y); ctx.scale(Math.cos(p.spin*.5), 1); ctx.translate(-s.width/2, 0); ctx.drawImage(s, 0, 0);
     } else ctx.drawImage(p.flash > 6 ? SPR[p.id + 'W'] : s, x, y);
     ctx.restore(); ctx.filter = 'none';
+    // alvo do próximo ataque enquanto o Jevil fala
+    if(G.scene === 'etalk' && G.targeted && G.targeted.includes(i)){
+      const cx = x + s.width/2, cy = y + s.height/2, r = 14 + (Math.floor(G.t/10) % 2)*3;
+      ctx.strokeStyle = '#ff2020'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx, cy, r, 0, TAU); ctx.moveTo(cx - r - 5, cy); ctx.lineTo(cx + r + 5, cy); ctx.moveTo(cx, cy - r - 5); ctx.lineTo(cx, cy + r + 5); ctx.stroke();
+    }
     if(p.defend && G.scene !== 'menu'){
       ctx.strokeStyle = p.col; ctx.lineWidth = 2; ctx.globalAlpha = .7;
       ctx.beginPath(); ctx.arc(x + s.width/2 + 18, y + s.height/2, 14, -1, 1); ctx.stroke(); ctx.globalAlpha = 1;
@@ -1508,8 +1522,13 @@ function drawMenuText(){
     const list = s.kind === 'act' ? ACTS.map(a => ({ ...a, cant: !actUsable(a) }))
       : s.kind === 'item' ? G.items.map(n => ({ name: n, desc: '' }))
       : SPELLS[P.id].map(sp => ({ ...sp, cant: sp.tp > G.tp }));
+    // 3 linhas visíveis; a lista rola junto com a seleção
+    const rows = Math.ceil(list.length/2), top = Math.max(0, Math.min(Math.floor(M.sel/2) - 1, rows - 3));
+    if(top > 0) text('▲', 560, 386, '#fff', 10, 'center');
+    if(top + 3 < rows) text('▼', 560, 430, '#fff', 10, 'center');
     list.forEach((it, i) => {
-      const x = 70 + (i % 2)*240, y = 386 + Math.floor(i/2)*30;
+      const r = Math.floor(i/2) - top; if(r < 0 || r > 2) return;
+      const x = 70 + (i % 2)*240, y = 386 + r*30;
       let nx = x;
       if(it.helpers){ it.helpers.forEach((h, k) => { ctx.fillStyle = G.party[h].col; ctx.fillRect(x + k*14, y + 2, 10, 10); }); nx += 30; }
       text(it.name, nx, y, it.cant ? '#808080' : '#fff', 14);
@@ -1517,14 +1536,14 @@ function drawMenuText(){
     });
     const cur = list[M.sel];
     if(cur){
-      if(cur.desc) text(cur.desc, 610, 386, '#808080', 8, 'right');
+      if(cur.desc) tr(cur.desc).split('#').forEach((ln, k) => text(ln, 610, 386 + k*14, '#808080', 8, 'right'));
       if(cur.tp) text(Math.round(cur.tp/CFG.tpMax*100) + '% TP', 610, 404, '#ffa040', 8, 'right');
     }
   } else if(s.kind === 'party'){
     G.party.forEach((p, i) => {
       const x = 70 + i*190, y = 386;
       text(cap(p.name), x, y, p.col, 14);
-      if(i === M.sel) heartAt(x - 28, y);
+      if(s.all || i === M.sel) heartAt(x - 28, y);
     });
     text(s.purpose === 'ITEM' ? s.item : s.spell.name, 70, 430, '#808080', 10);
   }
@@ -1572,10 +1591,23 @@ function drawFX(){
       return x < W + 20;
     }
     if(f.kind === 'buster'){
-      const k = Math.min(1, f.t/12), J = G.jevil, x = lerp(f.x0, J.x + 30, k), y = lerp(f.y0, J.y + 40, k);
-      ctx.fillStyle = '#ff60ff'; ctx.globalAlpha = 1 - Math.max(0, (f.t - 12)/8);
-      ctx.beginPath(); ctx.ellipse(x, y, 22, 10, -.3, 0, TAU); ctx.fill(); ctx.globalAlpha = 1;
-      return f.t < 20;
+      // obj_rudebuster_anim: o raio sai no passo 10, vira 1/4 do ângulo por passo e acelera 1.5
+      const P = f.who, J = G.jevil, tx = J.x + 40, ty = J.y + 40, D = Math.PI/180;
+      if(f.t === 10){ Snd.play('buster'); const x = P.x + 40, y = P.y + 30; f.bolt = { x, y, dir: Math.atan2(-(ty - y), tx - x)/D - 20, sp: 24, age: 0, live: true }; f.trail = []; }
+      const b = f.bolt;
+      if(b && b.live){
+        if(b.age >= 1){
+          b.dir += ((Math.atan2(-(ty - b.y), tx - b.x)/D - b.dir + 540) % 360 - 180)/4;
+          if(Math.hypot(tx - b.x, ty - b.y) <= 40){ b.live = false; f.boom = 0; f.onHit(f); Snd.play('damage'); if(f.chosen) Snd.play('crit'); }
+        }
+        if(b.live){ f.trail.push({ x: b.x, y: b.y, a: .8 }); b.x += Math.cos(b.dir*D)*b.sp; b.y -= Math.sin(b.dir*D)*b.sp; b.sp += 1.5; b.age++; }
+      }
+      ctx.fillStyle = '#ff60ff';
+      if(f.trail) f.trail = f.trail.filter(t => { t.a -= .1; if(t.a <= 0) return false; ctx.globalAlpha = t.a; ctx.beginPath(); ctx.arc(t.x, t.y, 8*t.a, 0, TAU); ctx.fill(); return true; });
+      if(b && b.live){ ctx.globalAlpha = 1; ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(-b.dir*D); ctx.beginPath(); ctx.ellipse(0, 0, 22, 10, 0, 0, TAU); ctx.fill(); ctx.restore(); }
+      if(f.boom !== undefined && f.boom < 12){ f.boom++; ctx.globalAlpha = 1 - f.boom/12; ctx.beginPath(); ctx.arc(tx, ty, 10 + f.boom*5, 0, TAU); ctx.fill(); }
+      ctx.globalAlpha = 1;
+      return f.t < 28 || (b && b.live) || (f.trail && f.trail.length) || (f.boom !== undefined && f.boom < 12);
     }
     return false;
   });
@@ -1754,7 +1786,7 @@ window.__G = G; window.__ATTACKS = ATTACKS; window.__update = update; window.__d
 }
 setLang(LANG);
 </script>
-<script src="assets/meta.js?v=20261029c"></script>
-<script src="local.js?v=20261029c"></script>
+<script src="assets/meta.js?v=20261029d"></script>
+<script src="local.js?v=20261029d"></script>
 </body>
 </html>
